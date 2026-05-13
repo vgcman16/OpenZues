@@ -106269,6 +106269,14 @@ def _devices_lookup_paired_for_pending(
         if not isinstance(item, Mapping):
             continue
         if _optional_cli_string(item.get("deviceId")) == pending_device_id:
+            pending_public_key = _optional_cli_string(pending.get("publicKey"))
+            paired_public_key = _optional_cli_string(item.get("publicKey"))
+            if (
+                pending_public_key is not None
+                and paired_public_key is not None
+                and pending_public_key != paired_public_key
+            ):
+                continue
             return item
     return None
 

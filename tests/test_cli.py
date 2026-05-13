@@ -1008,6 +1008,53 @@ def test_devices_list_human_output_renders_requested_and_approved_access(
     assert "scope upgrade" in result.stdout
 
 
+def test_devices_list_human_output_treats_public_key_mismatch_as_new_pairing(
+    monkeypatch,
+) -> None:
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            assert method == "device.pair.list"
+            assert params == {}
+            return {
+                "pending": [
+                    {
+                        "requestId": "req-1",
+                        "deviceId": "device-1",
+                        "publicKey": "new-key",
+                        "displayName": "Device One",
+                        "role": "operator",
+                        "scopes": ["operator.admin"],
+                        "ts": 1,
+                    },
+                ],
+                "paired": [
+                    {
+                        "deviceId": "device-1",
+                        "publicKey": "old-key",
+                        "displayName": "Device One",
+                        "roles": ["operator"],
+                        "scopes": ["operator.read"],
+                    },
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "list"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "new pairing" in result.stdout
+    assert "scope upgrade" not in result.stdout
+    assert "roles: operator; scopes: operator.read" not in result.stdout
+
+
 def test_devices_approve_json_calls_device_pair_approve(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
