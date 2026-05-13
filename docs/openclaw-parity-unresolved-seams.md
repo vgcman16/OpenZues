@@ -187,7 +187,7 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~6.5% after QR
+- The packaging/companion app breadth family is estimated at ~6.6% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
   gateway dispatch, remote device mutation dispatch, configured remote URL
@@ -195,8 +195,8 @@ Current percentage rollup:
   metadata, device token scope-preserving rotation, approved-role device token
   rotation gates, approved-scope device token rotation baselines, requested
   operator-scope pairing approval gates, inherited-scope rotation caller gates,
-  local QR password SecretRef resolution, and remove/clear/reject/rotate/
-  revoke coverage.
+  scoped token revocation caller gates, local QR password SecretRef resolution,
+  and remove/clear/reject/rotate/revoke coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -13093,5 +13093,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   rotations cannot refresh an admin-scoped token for a caller that only holds
   pairing scope. Source/test checkpointed in `e8214d65`; repo-wide parity
   remains estimated at ~99.9%, and packaging/companion breadth moves to ~6.5%.
+  Continue QR terminal rendering, companion-app device flows,
+  packaging/distribution, ACP lifecycle, or provider action breadth.
+- Current queue-head adjustment: native device-token revocation now checks
+  caller scopes against the target token scopes before writing `revokedAtMs`,
+  preserving token state and returning a revocation denial for insufficient
+  callers. Source/test checkpointed in `1acdb73c`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~6.6%.
   Continue QR terminal rendering, companion-app device flows,
   packaging/distribution, ACP lifecycle, or provider action breadth.
