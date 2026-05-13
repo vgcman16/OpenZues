@@ -2030,6 +2030,27 @@ def test_devices_mutation_commands_call_openclaw_gateway_methods(
     assert json.loads(result.stdout) == response
 
 
+def test_devices_rotate_rejects_blank_device_or_role_before_dispatch(monkeypatch) -> None:
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            raise AssertionError(f"unexpected gateway dispatch: {method} {params}")
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "rotate", "--device", " ", "--role", "main"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "--device and --role required" in result.stderr
+
+
 def test_devices_clear_json_removes_paired_and_rejects_pending(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

@@ -106751,10 +106751,9 @@ def devices_rotate_command(
 ) -> None:
     normalized_device_id = _optional_cli_string(device_id)
     normalized_role = _optional_cli_string(role)
-    if normalized_device_id is None:
-        raise typer.BadParameter("--device is required")
-    if normalized_role is None:
-        raise typer.BadParameter("--role is required")
+    if normalized_device_id is None or normalized_role is None:
+        typer.echo("--device and --role required", err=True)
+        raise typer.Exit(code=1)
     normalized_scopes = [
         scope for raw_scope in scopes or [] if (scope := _optional_cli_string(raw_scope))
     ]
@@ -106791,10 +106790,9 @@ def devices_revoke_command(
 ) -> None:
     normalized_device_id = _optional_cli_string(device_id)
     normalized_role = _optional_cli_string(role)
-    if normalized_device_id is None:
-        raise typer.BadParameter("--device is required")
-    if normalized_role is None:
-        raise typer.BadParameter("--role is required")
+    if normalized_device_id is None or normalized_role is None:
+        typer.echo("--device and --role required", err=True)
+        raise typer.Exit(code=1)
 
     result = _run_devices_gateway_node_method(
         "device.token.revoke",
