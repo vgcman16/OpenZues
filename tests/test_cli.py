@@ -1162,6 +1162,58 @@ def test_devices_approve_latest_json_includes_approval_state(monkeypatch) -> Non
     }
 
 
+def test_devices_approve_latest_human_renders_selected_approval_context(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            assert method == "device.pair.list"
+            assert params == {}
+            return {
+                "pending": [
+                    {
+                        "requestId": "req-abc",
+                        "deviceId": "device-9",
+                        "displayName": "Device Nine",
+                        "role": "operator",
+                        "scopes": ["operator.admin"],
+                        "remoteIp": "10.0.0.9",
+                        "ts": 1000,
+                    },
+                ],
+                "paired": [
+                    {
+                        "deviceId": "device-9",
+                        "displayName": "Device Nine",
+                        "roles": ["operator"],
+                        "scopes": ["operator.read"],
+                    },
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "approve"])
+
+    assert result.exit_code == 1
+    assert calls == [("device.pair.list", {})]
+    assert "req-abc" in result.stdout
+    assert "Device Nine" in result.stdout
+    assert "Approved: roles: operator; scopes: operator.read" in result.stdout
+    assert "Requested scopes exceed the current approval" in result.stdout
+    assert "openzues devices approve req-abc" in result.stderr
+
+
 def test_devices_approve_latest_json_preserves_gateway_flags_without_secrets(
     monkeypatch,
 ) -> None:

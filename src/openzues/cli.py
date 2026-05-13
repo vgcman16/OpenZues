@@ -106121,6 +106121,15 @@ def _devices_format_approval_kind(kind: object) -> str:
     }.get(normalized, normalized)
 
 
+def _devices_approval_preview_guidance(approval: Mapping[str, object]) -> str | None:
+    kind = _optional_cli_string(approval.get("kind"))
+    if kind == "scope-upgrade":
+        return "Requested scopes exceed the current approval."
+    if kind == "role-upgrade":
+        return "Requested roles exceed the current approval."
+    return None
+
+
 def _emit_devices_list(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
@@ -106649,9 +106658,10 @@ def devices_approve_command(
             approve_args.extend(["--timeout", timeout_value])
         if json_output:
             approve_args.append("--json")
+        approval_state = _devices_approval_state(listing, selected)
         preview = {
             "selected": selected,
-            "approvalState": _devices_approval_state(listing, selected),
+            "approvalState": approval_state,
             "approveCommand": _doctor_format_cli_args(approve_args),
             "requiresAuthFlags": {
                 "token": token_value is not None,
@@ -106661,7 +106671,17 @@ def devices_approve_command(
         if json_output:
             typer.echo(json.dumps(preview, indent=2))
         else:
-            _emit_devices_list({"pending": [selected], "paired": []}, json_output=False)
+            paired_preview = listing.get("paired")
+            _emit_devices_list(
+                {
+                    "pending": [selected],
+                    "paired": paired_preview if isinstance(paired_preview, list) else [],
+                },
+                json_output=False,
+            )
+            guidance = _devices_approval_preview_guidance(approval_state)
+            if guidance is not None:
+                typer.echo(guidance)
             typer.echo(f"Run: {preview['approveCommand']}", err=True)
             if token_value is not None or password_value is not None:
                 typer.echo("Reuse the same auth flag when running approve.", err=True)
