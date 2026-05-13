@@ -99738,6 +99738,18 @@ def _qr_gateway_remote_config(
     return _qr_config_mapping(_qr_gateway_config(config_snapshot).get("remote"))
 
 
+def _qr_device_pair_public_url(
+    config_snapshot: Mapping[str, object] | None,
+) -> str | None:
+    if config_snapshot is None:
+        return None
+    plugins = _qr_config_mapping(config_snapshot.get("plugins"))
+    entries = _qr_config_mapping(plugins.get("entries"))
+    device_pair = _qr_config_mapping(entries.get("device-pair"))
+    config = _qr_config_mapping(device_pair.get("config"))
+    return _qr_config_text(config.get("publicUrl"))
+
+
 def _qr_gateway_tailscale_config(
     config_snapshot: Mapping[str, object] | None,
 ) -> Mapping[str, object]:
@@ -100345,6 +100357,15 @@ def _resolve_qr_gateway_url(
     if explicit_url:
         return _normalize_pairing_setup_url(explicit_url), (
             "cli.url" if str(url or "").strip() else "cli.publicUrl"
+        )
+    device_pair_public_url = _qr_device_pair_public_url(config_snapshot)
+    if not remote and device_pair_public_url is not None:
+        return (
+            _normalize_pairing_config_url(
+                device_pair_public_url,
+                invalid_error="Configured publicUrl is invalid.",
+            ),
+            "plugins.entries.device-pair.config.publicUrl",
         )
     remote_url = _qr_config_text(_qr_gateway_remote_config(config_snapshot).get("url"))
     if remote:

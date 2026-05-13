@@ -257,6 +257,55 @@ def test_qr_setup_code_only_allows_private_lan_cleartext_url(
     assert payload["url"] == "ws://192.168.1.8:18789"
 
 
+def test_qr_uses_device_pair_public_url_from_config_when_url_omitted(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.13-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.13-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {"auth": {"mode": "token", "token": "local-token"}},
+                "plugins": {
+                    "entries": {
+                        "device-pair": {
+                            "config": {
+                                "publicUrl": "wss://device-pair.example.test:443",
+                            },
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "local-token" not in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://device-pair.example.test:443"
+    assert payload["urlSource"] == "plugins.entries.device-pair.config.publicUrl"
+    setup_payload = _decode_base64url_json(payload["setupCode"])
+    assert setup_payload["url"] == "wss://device-pair.example.test:443"
+
+
 def test_qr_local_json_resolves_gateway_password_secretref(
     tmp_path, monkeypatch
 ) -> None:
