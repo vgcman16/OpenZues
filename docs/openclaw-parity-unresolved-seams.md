@@ -187,14 +187,15 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~6.2% after QR
+- The packaging/companion app breadth family is estimated at ~6.3% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
   gateway dispatch, remote device mutation dispatch, configured remote URL
   defaults, loopback pairing-required fallback, approval-state preview
   metadata, device token scope-preserving rotation, approved-role device token
-  rotation gates, local QR password SecretRef resolution, and
-  remove/clear/reject/rotate/revoke coverage.
+  rotation gates, approved-scope device token rotation baselines, local QR
+  password SecretRef resolution, and remove/clear/reject/rotate/revoke
+  coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -13071,3 +13072,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9%, and packaging/companion breadth moves to ~6.2%. Continue QR terminal
   rendering, companion-app device flows, packaging/distribution, ACP lifecycle,
   or provider action breadth.
+- Current queue-head adjustment: native device-token rotation now rejects
+  requested scopes outside the approved device baseline, including operator
+  admin/write/read compatibility and exact role-prefixed checks for
+  non-operator roles, leaving existing token state unchanged on denied
+  rotations. Source/test checkpointed in `46bbf88c`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~6.3%.
+  Continue QR terminal rendering, companion-app device flows, packaging/
+  distribution, ACP lifecycle, or provider action breadth.
