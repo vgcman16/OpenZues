@@ -12878,6 +12878,18 @@ class GatewayNodeMethodService:
             )
             pending = await self._pairing_service.list_pending()
             paired = await self._pairing_service.list_paired_nodes()
+            if _device_requester_is_device_bound_non_admin(resolved_requester):
+                requester_device_id = (resolved_requester.node_id or "").strip()
+                pending = [
+                    request
+                    for request in pending
+                    if str(request.get("deviceId") or "").strip() == requester_device_id
+                ]
+                paired = [
+                    device
+                    for device in paired
+                    if device.node_id.strip() == requester_device_id
+                ]
             device_pair_paired_payloads: list[dict[str, object]] = []
             for device in paired:
                 tokens = await self._pairing_service.list_device_token_summaries(device.node_id)

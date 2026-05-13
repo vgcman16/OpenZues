@@ -1430,6 +1430,78 @@ async def test_device_pair_remove_rejects_other_device_requester(tmp_path) -> No
 
 
 @pytest.mark.asyncio
+async def test_device_pair_list_filters_device_bound_non_admin_requester(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    requester_a = GatewayNodeMethodRequester(
+        node_id="device-list-owner-a",
+        caller_scopes=("operator.pairing",),
+    )
+    admin_requester = GatewayNodeMethodRequester(
+        node_id="device-list-owner-a",
+        caller_scopes=("operator.pairing", "operator.admin"),
+    )
+
+    for device_id in ("device-list-owner-a", "device-list-owner-b"):
+        created = await service.call(
+            "node.pair.request",
+            {
+                "nodeId": device_id,
+                "displayName": device_id,
+                "role": "operator",
+            },
+            now_ms=1_000,
+        )
+        await service.call(
+            "device.pair.approve",
+            {"requestId": created["request"]["requestId"]},
+            now_ms=2_000,
+        )
+
+    pending = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-list-owner-c",
+            "displayName": "device-list-owner-c",
+            "role": "operator",
+        },
+        now_ms=3_000,
+    )
+
+    visible = await service.call(
+        "device.pair.list",
+        {},
+        requester=requester_a,
+    )
+    admin_visible = await service.call(
+        "device.pair.list",
+        {},
+        requester=admin_requester,
+    )
+    full = await service.call("device.pair.list", {})
+
+    assert visible["pending"] == []
+    assert [device["deviceId"] for device in visible["paired"]] == [
+        "device-list-owner-a",
+    ]
+    assert [entry["requestId"] for entry in full["pending"]] == [
+        pending["request"]["requestId"]
+    ]
+    assert [device["deviceId"] for device in full["paired"]] == [
+        "device-list-owner-a",
+        "device-list-owner-b",
+    ]
+    assert admin_visible == full
+
+
+@pytest.mark.asyncio
 async def test_device_pair_approve_reject_rejects_other_device_requester(
     tmp_path,
 ) -> None:
