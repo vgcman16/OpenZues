@@ -13157,3 +13157,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, and packaging/companion breadth moves to
   ~7.3%. Continue QR terminal rendering, companion-app device flows,
   packaging/distribution, ACP lifecycle, or provider action breadth.
+- Current queue-head adjustment: native `device.pair.list` now filters
+  pending and paired device rows for non-admin requesters bound to a device
+  identity while preserving full visibility for admin-scoped and unbound
+  operator callers. Source/test checkpointed in `2781c38d`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~7.4%. Continue QR terminal rendering, companion-app device flows,
+  packaging/distribution, ACP lifecycle, or provider action breadth.
