@@ -100295,6 +100295,15 @@ def _resolve_qr_auth_label(
 
     auth_config = _qr_config_mapping(gateway_config.get("auth"))
     auth_mode = str(auth_config.get("mode") or "").strip().lower()
+    if (
+        not auth_mode
+        and _has_configured_secret_input(auth_config.get("token"))
+        and _has_configured_secret_input(auth_config.get("password"))
+    ):
+        raise ValueError(
+            "gateway.auth.mode is unset for token/password auth. Set "
+            "gateway.auth.mode to token or password before generating a setup code."
+        )
     has_token = (
         env_token is not None
         or _qr_config_text(auth_config.get("token")) is not None

@@ -316,6 +316,66 @@ def test_qr_local_json_resolves_gateway_password_secretref(
     assert payload["urlSource"] == "cli.url"
 
 
+def test_qr_rejects_inferred_token_password_secretrefs_before_token_issue(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("QR_INFERRED_GATEWAY_TOKEN", "inferred-token")
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.8-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.8-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "secrets": {"providers": {"default": {"source": "env"}}},
+                "gateway": {
+                    "auth": {
+                        "token": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "QR_INFERRED_GATEWAY_TOKEN",
+                        },
+                        "password": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "MISSING_LOCAL_GATEWAY_PASSWORD",
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--setup-code-only",
+            "--url",
+            "wss://gateway.example.test:18789",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "gateway.auth.mode is unset" in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
 def test_qr_remote_requires_explicit_remote_url_before_token_issue(
     tmp_path, monkeypatch
 ) -> None:
