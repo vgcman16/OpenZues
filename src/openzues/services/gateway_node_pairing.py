@@ -347,8 +347,8 @@ class GatewayNodePairingService:
         if request_row is None:
             return None
         request = _request_from_row(request_row)
-        missing_scope = _missing_scope(
-            required_scopes=_required_approve_scopes(request.commands),
+        missing_scope = _missing_pairing_approve_scope(
+            request=request,
             caller_scopes=caller_scopes,
         )
         if missing_scope is not None:
@@ -734,6 +734,62 @@ def _missing_scope(
     allowed = set(caller_scopes)
     for scope in required_scopes:
         if scope not in allowed:
+            return scope
+    return None
+
+
+def _missing_pairing_approve_scope(
+    *,
+    request: GatewayNodePairingRequest,
+    caller_scopes: tuple[str, ...] | None,
+) -> str | None:
+    command_scope = _missing_scope(
+        required_scopes=_required_approve_scopes(request.commands),
+        caller_scopes=caller_scopes,
+    )
+    if command_scope is not None:
+        return command_scope
+    requested_roles = _dedupe_scopes(list(request.roles))
+    requested_scopes = _dedupe_scopes(list(request.scopes))
+    scope_outside_roles = _scope_outside_roles(
+        requested_roles=requested_roles,
+        requested_scopes=requested_scopes,
+    )
+    if scope_outside_roles is not None:
+        return scope_outside_roles
+    if _OPERATOR_ROLE not in requested_roles:
+        return None
+    operator_scopes = [
+        scope for scope in requested_scopes if scope.startswith(_OPERATOR_SCOPE_PREFIX)
+    ]
+    if not operator_scopes:
+        return None
+    if caller_scopes is None:
+        return operator_scopes[0]
+    for scope in operator_scopes:
+        if not _role_scopes_allow(
+            role=_OPERATOR_ROLE,
+            requested_scopes=[scope],
+            allowed_scopes=list(caller_scopes),
+        ):
+            return scope
+    return None
+
+
+def _scope_outside_roles(
+    *,
+    requested_roles: list[str],
+    requested_scopes: list[str],
+) -> str | None:
+    for scope in requested_scopes:
+        if not any(
+            _role_scopes_allow(
+                role=role,
+                requested_scopes=[scope],
+                allowed_scopes=[scope],
+            )
+            for role in requested_roles
+        ):
             return scope
     return None
 

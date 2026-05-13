@@ -1394,6 +1394,9 @@ async def test_device_token_family_persists_rotate_list_and_revoke(tmp_path) -> 
         GatewayNodeRegistry(),
         pairing_service=pairing_service,
     )
+    requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.write")
+    )
 
     created = await service.call(
         "node.pair.request",
@@ -1406,7 +1409,12 @@ async def test_device_token_family_persists_rotate_list_and_revoke(tmp_path) -> 
         now_ms=1_000,
     )
     request_id = created["request"]["requestId"]
-    await service.call("device.pair.approve", {"requestId": request_id}, now_ms=2_000)
+    await service.call(
+        "device.pair.approve",
+        {"requestId": request_id},
+        requester=requester,
+        now_ms=2_000,
+    )
 
     rotated = await service.call(
         "device.token.rotate",
@@ -1569,7 +1577,7 @@ async def test_device_token_rotate_rejects_scope_outside_approved_baseline(
 
 
 @pytest.mark.asyncio
-async def test_device_token_rotate_preserves_existing_scopes_when_omitted(
+async def test_device_pair_approve_rejects_requested_operator_scope_without_caller_scope(
     tmp_path,
 ) -> None:
     database = Database(tmp_path / "data" / "openzues-test.db")
@@ -1583,6 +1591,46 @@ async def test_device_token_rotate_preserves_existing_scopes_when_omitted(
     created = await service.call(
         "node.pair.request",
         {
+            "nodeId": "device-token-admin-request",
+            "displayName": "Admin Request Device",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+
+    with pytest.raises(ValueError, match="missing scope: operator.admin"):
+        await service.call(
+            "device.pair.approve",
+            {"requestId": request_id},
+            now_ms=2_000,
+        )
+
+    pairing = await service.call("device.pair.list", {})
+    assert pairing["pending"][0]["requestId"] == request_id
+    assert pairing["pending"][0]["scopes"] == ["operator.admin"]
+    assert pairing["paired"] == []
+
+
+@pytest.mark.asyncio
+async def test_device_token_rotate_preserves_existing_scopes_when_omitted(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    requester = GatewayNodeMethodRequester(
+        caller_scopes=("operator.pairing", "operator.write")
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
             "nodeId": "device-token-scope-node",
             "displayName": "Scope Device",
             "role": "operator",
@@ -1591,7 +1639,12 @@ async def test_device_token_rotate_preserves_existing_scopes_when_omitted(
         now_ms=1_000,
     )
     request_id = created["request"]["requestId"]
-    await service.call("device.pair.approve", {"requestId": request_id}, now_ms=2_000)
+    await service.call(
+        "device.pair.approve",
+        {"requestId": request_id},
+        requester=requester,
+        now_ms=2_000,
+    )
     await service.call(
         "device.token.rotate",
         {
