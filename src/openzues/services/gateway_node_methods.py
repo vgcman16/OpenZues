@@ -58,6 +58,7 @@ from openzues.services.gateway_message_actions import (
 )
 from openzues.services.gateway_method_policy import (
     ADMIN_GATEWAY_METHOD_SCOPE,
+    READ_GATEWAY_METHOD_SCOPE,
     TALK_SECRETS_GATEWAY_METHOD_SCOPE,
     WRITE_GATEWAY_METHOD_SCOPE,
 )
@@ -20702,9 +20703,21 @@ def _missing_requested_scope(
         return None
     allowed = set(caller_scopes)
     for scope in requested_scopes:
-        if scope not in allowed:
+        if not _gateway_scope_satisfied(scope, allowed):
             return scope
     return None
+
+
+def _gateway_scope_satisfied(scope: str, allowed: set[str]) -> bool:
+    if not scope.startswith("operator."):
+        return scope in allowed
+    if ADMIN_GATEWAY_METHOD_SCOPE in allowed:
+        return True
+    if scope == READ_GATEWAY_METHOD_SCOPE:
+        return READ_GATEWAY_METHOD_SCOPE in allowed or WRITE_GATEWAY_METHOD_SCOPE in allowed
+    if scope == WRITE_GATEWAY_METHOD_SCOPE:
+        return WRITE_GATEWAY_METHOD_SCOPE in allowed
+    return scope in allowed
 
 
 def _device_token_requester_target_denied(

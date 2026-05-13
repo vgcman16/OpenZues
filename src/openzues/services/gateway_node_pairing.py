@@ -829,7 +829,7 @@ def _missing_scope(
         return None
     allowed = set(caller_scopes)
     for scope in required_scopes:
-        if scope not in allowed:
+        if not _scope_satisfied(scope, allowed):
             return scope
     return None
 
@@ -949,6 +949,12 @@ def _operator_scope_satisfied(scope: str, allowed: set[str]) -> bool:
         return READ_GATEWAY_METHOD_SCOPE in allowed or WRITE_GATEWAY_METHOD_SCOPE in allowed
     if scope == WRITE_GATEWAY_METHOD_SCOPE:
         return WRITE_GATEWAY_METHOD_SCOPE in allowed
+    return scope in allowed
+
+
+def _scope_satisfied(scope: str, allowed: set[str]) -> bool:
+    if scope.startswith(_OPERATOR_SCOPE_PREFIX):
+        return _operator_scope_satisfied(scope, allowed)
     return scope in allowed
 
 

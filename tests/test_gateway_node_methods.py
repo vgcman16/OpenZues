@@ -2050,6 +2050,60 @@ async def test_device_token_rotate_revoke_rejects_other_device_requester(
 
 
 @pytest.mark.asyncio
+async def test_device_token_rotate_treats_admin_scope_as_operator_superset(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+    admin_requester = GatewayNodeMethodRequester(caller_scopes=("operator.admin",))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-token-admin-superset",
+            "displayName": "Admin Superset Device",
+            "role": "operator",
+            "scopes": ["operator.admin"],
+        },
+        now_ms=1_000,
+    )
+    await service.call(
+        "device.pair.approve",
+        {"requestId": created["request"]["requestId"]},
+        requester=admin_requester,
+        now_ms=2_000,
+    )
+
+    rotated = await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-admin-superset",
+            "role": "operator",
+            "scopes": ["operator.read"],
+        },
+        requester=admin_requester,
+        now_ms=3_000,
+    )
+
+    assert rotated["scopes"] == ["operator.read"]
+    listed = await service.call("device.pair.list", {})
+    assert listed["paired"][0]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.read"],
+            "createdAtMs": 3_000,
+            "rotatedAtMs": 3_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_device_pair_reject_removes_pending_request_and_broadcasts(tmp_path) -> None:
     database = Database(tmp_path / "data" / "openzues-test.db")
     await database.initialize()
