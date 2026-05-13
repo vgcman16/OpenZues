@@ -25018,6 +25018,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `706f23e0`.
 
+- Native `openzues devices approve` implicit/latest human preview now renders
+  the selected pending request with the real paired approval context, preserves
+  the rerun command, and prints OpenClaw-style guidance when requested scopes or
+  roles exceed the current approval. This closes `OZ-COMP-001AR`; repo-wide
+  parity remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~8.1%.
+- Verified device approve human preview context with focused red/green
+  `python -m pytest tests\test_cli.py::test_devices_approve_latest_human_renders_selected_approval_context -q`
+  (`1 failed` before implementation because approved access was rendered as
+  `none`, then `1 passed`), adjacent device CLI proof `python -m pytest
+  tests\test_cli.py -q -k "devices_approve_latest_human_renders_selected_approval_context or devices_approve_latest or devices_list_human_output_treats_public_key_mismatch_as_new_pairing or devices_list_human_output_renders_requested_and_approved_access or devices_list_human_output_sanitizes_device_controlled_fields or devices_list or devices_clear or devices_mutation_commands or devices_remote_mutation"`
+  (`21 passed, 610 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `091d01dd`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)
