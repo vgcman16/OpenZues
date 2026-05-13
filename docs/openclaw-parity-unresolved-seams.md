@@ -13150,3 +13150,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   packaging/companion breadth moves to ~7.2%. Continue QR terminal rendering,
   companion-app device flows, packaging/distribution, ACP lifecycle, or
   provider action breadth.
+- Current queue-head adjustment: native `device.pair.approve` and
+  `device.pair.reject` now reject cross-device pending-request resolution
+  attempts from non-admin requesters bound to another device, preserving the
+  pending request. Source/test checkpointed in `927cb1e2`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~7.3%. Continue QR terminal rendering, companion-app device flows,
+  packaging/distribution, ACP lifecycle, or provider action breadth.
