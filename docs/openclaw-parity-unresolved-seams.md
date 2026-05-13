@@ -187,7 +187,7 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~6.7% after QR
+- The packaging/companion app breadth family is estimated at ~6.8% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
   gateway dispatch, remote device mutation dispatch, configured remote URL
@@ -196,7 +196,8 @@ Current percentage rollup:
   rotation gates, approved-scope device token rotation baselines, requested
   operator-scope pairing approval gates, inherited-scope rotation caller gates,
   scoped token revocation caller gates, pairing repair inherited-token scope
-  gates, local QR password SecretRef resolution, and
+  gates, device-token cross-device mutation guards, local QR password SecretRef
+  resolution, and
   remove/clear/reject/rotate/revoke coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
@@ -13111,3 +13112,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   packaging/companion breadth moves to ~6.7%. Continue QR terminal rendering,
   companion-app device flows, packaging/distribution, ACP lifecycle, or
   provider action breadth.
+- Current queue-head adjustment: native device-token rotate/revoke now rejects
+  cross-device mutations from requesters bound to a different device unless
+  they carry admin scope, preserving target token state on denial. Source/test
+  checkpointed in `8afff4f9`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~6.8%. Continue QR terminal
+  rendering, companion-app device flows, packaging/distribution, ACP lifecycle,
+  or provider action breadth.
