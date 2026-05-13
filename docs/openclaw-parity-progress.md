@@ -25081,6 +25081,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `c52ba967`.
 
+- Native `openzues qr` now uses
+  `plugins.entries.device-pair.config.publicUrl` as the non-remote setup-code
+  URL fallback when no explicit CLI URL is provided, matching OpenClaw's
+  device-pair plugin configuration behavior while still letting `--remote`
+  ignore that URL. This closes `OZ-COMP-001AV`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~8.5%.
+- Verified QR device-pair publicUrl fallback with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_uses_device_pair_public_url_from_config_when_url_omitted -q`
+  (`1 failed` before implementation because loopback fallback rejected setup
+  generation, then `1 passed`), adjacent QR CLI proof `python -m pytest
+  tests\test_cli.py -q -k "qr_"` (`19 passed, 616 deselected`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `d336dc98`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

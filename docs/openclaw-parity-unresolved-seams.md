@@ -13232,3 +13232,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9%, and packaging/companion breadth moves to ~8.4%. Continue
   companion-app device flows, packaging/distribution, ACP lifecycle, provider
   action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now uses
+  `plugins.entries.device-pair.config.publicUrl` as the local setup-code URL
+  fallback when no explicit CLI URL is provided. Source/test checkpointed in
+  `d336dc98`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.5%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
