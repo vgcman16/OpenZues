@@ -187,7 +187,7 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~7.0% after QR
+- The packaging/companion app breadth family is estimated at ~7.1% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
   gateway dispatch, remote device mutation dispatch, configured remote URL
@@ -198,7 +198,8 @@ Current percentage rollup:
   scoped token revocation caller gates, pairing repair inherited-token scope
   gates, device-token cross-device mutation guards, operator-admin scope
   compatibility for device-token rotation, pairing approval seeded device-auth
-  tokens, local QR password SecretRef resolution, and
+  tokens, rotated token raw-value redaction for unbound callers, local QR
+  password SecretRef resolution, and
   remove/clear/reject/rotate/revoke coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
@@ -13135,3 +13136,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   packaging/companion breadth moves to ~7.0%. Continue QR terminal rendering,
   companion-app device flows, packaging/distribution, ACP lifecycle, or
   provider action breadth.
+- Current queue-head adjustment: native `device.token.rotate` now returns the
+  raw rotated token only to requesters bound to the target device, redacting it
+  for unbound/admin-style callers while preserving summaries. Source/test
+  checkpointed in `5d99e094`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~7.1%. Continue QR terminal
+  rendering, companion-app device flows, packaging/distribution, ACP lifecycle,
+  or provider action breadth.
