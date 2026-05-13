@@ -13197,3 +13197,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   repo-wide parity remains estimated at ~99.9%, and packaging/companion breadth
   moves to ~7.9%. Continue companion-app device flows, packaging/distribution,
   ACP lifecycle, provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues devices list` pending
+  approval context now refuses to reuse paired approved access when pending and
+  paired public keys are both present but differ. Source/test checkpointed in
+  `706f23e0`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.0%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.

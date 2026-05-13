@@ -25000,6 +25000,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `71dac773`.
 
+- Native `openzues devices list` pending approval context now matches paired
+  devices by normalized device id while refusing to reuse approved access when
+  both pending and paired public keys are present but differ. This closes
+  `OZ-COMP-001AQ`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.0%.
+- Verified device CLI public-key mismatch handling with focused red/green
+  `python -m pytest tests\test_cli.py::test_devices_list_human_output_treats_public_key_mismatch_as_new_pairing -q`
+  (`1 failed` before implementation because the old paired access was reused
+  as a `scope upgrade`, then `1 passed`), adjacent device CLI proof `python -m
+  pytest tests\test_cli.py -q -k
+  "devices_list_human_output_treats_public_key_mismatch_as_new_pairing or
+  devices_list_human_output_renders_requested_and_approved_access or
+  devices_list_human_output_sanitizes_device_controlled_fields or devices_list
+  or devices_approve_latest or devices_clear or devices_mutation_commands or
+  devices_remote_mutation"` (`20 passed, 610 deselected`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `706f23e0`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)
