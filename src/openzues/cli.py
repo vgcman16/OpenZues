@@ -106154,6 +106154,8 @@ def _emit_devices_list(payload: dict[str, object], *, json_output: bool) -> None
                 device_id = f"{device_id} - {remote_ip}"
             device_text = f" {device_id}" if device_id is not None else ""
             typer.echo(f"  {request_id}{device_text}")
+            if remote_ip:
+                typer.echo(f"    IP:     {remote_ip}")
             approval = _devices_approval_state(payload, item)
             typer.echo(
                 f"    Status: {_devices_format_approval_kind(approval.get('kind'))}"

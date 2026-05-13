@@ -1214,6 +1214,51 @@ def test_devices_approve_latest_human_renders_selected_approval_context(
     assert "openzues devices approve req-abc" in result.stderr
 
 
+def test_devices_approve_latest_human_sanitizes_preview_ip_output(
+    monkeypatch,
+) -> None:
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            assert method == "device.pair.list"
+            assert params == {}
+            return {
+                "pending": [
+                    {
+                        "requestId": "req-abc",
+                        "deviceId": "device-9",
+                        "displayName": "Device Nine",
+                        "role": "operator",
+                        "scopes": ["operator.admin"],
+                        "remoteIp": "10.0.0.9\rspoof",
+                        "ts": 1000,
+                    },
+                ],
+                "paired": [
+                    {
+                        "deviceId": "device-9",
+                        "displayName": "Device Nine",
+                        "roles": ["operator"],
+                        "scopes": ["operator.read"],
+                    },
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "approve"])
+
+    assert result.exit_code == 1
+    assert "\r" not in result.stdout
+    assert "IP:     10.0.0.9spoof" in result.stdout
+
+
 def test_devices_approve_latest_json_preserves_gateway_flags_without_secrets(
     monkeypatch,
 ) -> None:
