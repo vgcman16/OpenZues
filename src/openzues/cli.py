@@ -4,6 +4,7 @@ import asyncio
 import base64
 import codecs
 import copy
+import importlib
 import inspect
 import ipaddress
 import json
@@ -99596,6 +99597,47 @@ def _encode_pairing_setup_code(payload: Mapping[str, object]) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
+def _render_terminal_qr(text: str) -> str:
+    value = str(text)
+    if not value:
+        raise ValueError("QR text must not be empty.")
+    try:
+        qrcode = importlib.import_module("qrcode")
+    except ModuleNotFoundError as exc:
+        raise ValueError(
+            "Terminal QR rendering requires the qrcode Python package."
+        ) from exc
+    qr = qrcode.QRCode(
+        border=2,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+    )
+    qr.add_data(value)
+    qr.make(fit=True)
+    matrix = qr.get_matrix()
+    if not matrix:
+        raise ValueError("Terminal QR rendering failed.")
+    lines: list[str] = []
+    width = max(len(row) for row in matrix)
+    padded_rows = [list(row) + [False] * (width - len(row)) for row in matrix]
+    if len(padded_rows) % 2:
+        padded_rows.append([False] * width)
+    for row_index in range(0, len(padded_rows), 2):
+        top = padded_rows[row_index]
+        bottom = padded_rows[row_index + 1]
+        line = "".join(
+            "█"
+            if top[col] and bottom[col]
+            else "▀"
+            if top[col]
+            else "▄"
+            if bottom[col]
+            else " "
+            for col in range(width)
+        )
+        lines.append(line.rstrip())
+    return "\n".join(lines)
+
+
 def _format_pairing_host(host: str) -> str:
     if ":" in host and not host.startswith("["):
         return f"[{host}]"
@@ -100571,12 +100613,7 @@ def qr_command(
         "",
     ]
     if ascii_qr:
-        lines.extend(
-            [
-                "(terminal QR rendering is unavailable in this native CLI build)",
-                "",
-            ]
-        )
+        lines.extend([_render_terminal_qr(setup_code), ""])
     lines.extend(
         [
             f"Setup code: {setup_code}",

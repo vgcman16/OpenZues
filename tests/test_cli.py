@@ -155,6 +155,26 @@ def test_qr_setup_code_only_emits_openclaw_base64url_bootstrap_payload(
     assert record["profile"]["scopes"] == list(BOOTSTRAP_HANDOFF_OPERATOR_SCOPES)
 
 
+def test_qr_human_output_renders_terminal_qr(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--url",
+            "wss://gateway.example.test:18789",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Pairing QR" in result.stdout
+    assert "(terminal QR rendering is unavailable" not in result.stdout
+    assert "Setup code:" in result.stdout
+    assert any(block in result.stdout for block in ("█", "▀", "▄"))
+
+
 def test_qr_default_loopback_requires_explicit_reachable_url_before_token_issue(
     tmp_path, monkeypatch
 ) -> None:

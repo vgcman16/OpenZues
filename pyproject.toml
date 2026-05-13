@@ -30,6 +30,7 @@ dependencies = [
   "PyYAML>=6.0.2",
   "pydantic-settings>=2.11.0",
   "python-multipart>=0.0.20",
+  "qrcode>=8.0",
   "tzdata>=2025.2",
   "typer>=0.19.2",
   "uvicorn[standard]>=0.37.0",
