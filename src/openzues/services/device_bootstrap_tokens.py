@@ -102,6 +102,20 @@ def clear_device_bootstrap_tokens(*, base_dir: Path) -> dict[str, int]:
     return {"removed": removed}
 
 
+def restore_device_bootstrap_token(
+    *,
+    base_dir: Path,
+    record: Mapping[str, Any],
+) -> None:
+    token = str(record.get("token") or "").strip()
+    if not token:
+        return
+    bootstrap_path = _bootstrap_token_path(base_dir)
+    state = _read_bootstrap_state(bootstrap_path, now_ms=int(time.time() * 1000))
+    state[token] = dict(record)
+    _write_bootstrap_state(bootstrap_path, state)
+
+
 def verify_device_bootstrap_token(
     *,
     base_dir: Path,

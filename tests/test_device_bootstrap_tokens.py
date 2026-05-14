@@ -8,6 +8,7 @@ from openzues.services.device_bootstrap_tokens import (
     get_device_bootstrap_token_profile,
     issue_device_bootstrap_token,
     redeem_device_bootstrap_token_profile,
+    restore_device_bootstrap_token,
     revoke_device_bootstrap_token,
     verify_device_bootstrap_token,
 )
@@ -239,3 +240,19 @@ def test_redeem_device_bootstrap_token_profile_persists_progress(tmp_path) -> No
             "operator.write",
         ],
     }
+
+
+def test_restore_device_bootstrap_token_reinstates_revoked_record(tmp_path) -> None:
+    issued = issue_device_bootstrap_token(
+        base_dir=tmp_path,
+        profile={"roles": ["operator"], "scopes": ["operator.read"]},
+    )
+    revoked = revoke_device_bootstrap_token(base_dir=tmp_path, token=issued.token)
+
+    restore_device_bootstrap_token(
+        base_dir=tmp_path,
+        record=revoked["record"],
+    )
+    profile = get_device_bootstrap_token_profile(base_dir=tmp_path, token=issued.token)
+
+    assert profile == {"roles": ["operator"], "scopes": ["operator.read"]}
