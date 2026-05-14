@@ -188,7 +188,7 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~11.3% after QR
+- The packaging/companion app breadth family is estimated at ~11.4% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
   gateway dispatch, remote device mutation dispatch, configured remote URL
@@ -204,8 +204,9 @@ Current percentage rollup:
   gates, device-token cross-device mutation guards, operator-admin scope
   compatibility for device-token rotation, pairing approval seeded device-auth
   tokens, rotated token raw-value redaction for unbound callers, local QR
-  password SecretRef resolution, cross-device pairing removal guards, and
-  remove/clear/reject/rotate/revoke coverage.
+  password SecretRef resolution, cross-device pairing removal guards, Windows
+  companion-node default command parity, and remove/clear/reject/rotate/revoke
+  coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -13472,3 +13473,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.99999997%. Continue
   remaining packaging/distribution breadth, ACP lifecycle depth, installed
   plugin activation, provider media edges, or companion app flows.
+- Current queue-head adjustment: Windows companion-node command defaults now
+  include OpenClaw's canvas, camera, location, device, system, and
+  `screen.snapshot` command families while still excluding `screen.record` by
+  default. Source/test checkpointed in `9ca32c06`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~11.4%.
+  Continue companion-app device flows, packaging/distribution, ACP lifecycle,
+  provider media edges, or setup/onboarding gaps.
