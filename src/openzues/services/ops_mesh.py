@@ -13152,7 +13152,9 @@ def _looks_like_direct_channel_media_source(value: str) -> bool:
     candidate = value.strip()
     if not candidate:
         return False
-    if re.match(r"(?i)^(https?://|file://|/|[a-z]:[\\/]|\\\\|\.{1,2}/|~)", candidate):
+    if re.match(r"(?i)^https?://", candidate):
+        return candidate.lower().startswith("https://")
+    if re.match(r"(?i)^(file://|/|[a-z]:[\\/]|\\\\|\.{1,2}/|~)", candidate):
         return True
     return ("/" in candidate or "\\" in candidate) and "." in candidate
 
