@@ -11491,6 +11491,54 @@ async def test_ops_mesh_service_send_lifts_media_directive_for_native_adapter(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_lifts_bare_filename_media_directive(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-bare-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-bare-media-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message="Caption\nMEDIA:image.png",
+        idempotency_key="idem-bare-media-directive-send",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(provider_requests) == 1
+    assert provider_requests[0].message == "Caption"
+    assert provider_requests[0].media_urls == ("image.png",)
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == "Caption"
+    assert delivery["event_payload"]["mediaUrl"] == "image.png"
+    assert delivery["event_payload"]["mediaUrls"] == ["image.png"]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_lifts_audio_as_voice_directive(
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-audio-directive"

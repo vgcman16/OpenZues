@@ -13148,6 +13148,10 @@ def _normalize_direct_channel_media_urls(
     return normalized
 
 
+_DIRECT_CHANNEL_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
+_DIRECT_CHANNEL_FILE_EXT_RE = re.compile(r"\.\w{1,10}$")
+
+
 def _looks_like_direct_channel_media_source(value: str) -> bool:
     candidate = value.strip()
     if not candidate:
@@ -13156,7 +13160,19 @@ def _looks_like_direct_channel_media_source(value: str) -> bool:
         return _direct_channel_remote_media_url_allowed(candidate)
     if re.match(r"(?i)^(file://|/|[a-z]:[\\/]|\\\\|\.{1,2}/|~)", candidate):
         return True
+    if _direct_channel_bare_media_filename_allowed(candidate):
+        return True
     return ("/" in candidate or "\\" in candidate) and "." in candidate
+
+
+def _direct_channel_bare_media_filename_allowed(candidate: str) -> bool:
+    return (
+        _DIRECT_CHANNEL_SCHEME_RE.match(candidate) is None
+        and "/" not in candidate
+        and "\\" not in candidate
+        and not any(character.isspace() for character in candidate)
+        and _DIRECT_CHANNEL_FILE_EXT_RE.search(candidate) is not None
+    )
 
 
 def _direct_channel_remote_media_url_allowed(value: str) -> bool:
