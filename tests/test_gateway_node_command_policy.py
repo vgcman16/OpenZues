@@ -30,6 +30,29 @@ def test_windows_allowlist_matches_openclaw_companion_defaults() -> None:
     assert "screen.record" not in allowlist
 
 
+def test_android_allowlist_includes_openclaw_action_command_defaults() -> None:
+    allowlist = resolve_node_command_allowlist(
+        platform="Android 16",
+        device_family="Android phone",
+    )
+
+    declared = (
+        "camera.snap",
+        "camera.clip",
+        "contacts.add",
+        "calendar.add",
+        "sms.send",
+        "sms.search",
+    )
+
+    for command in declared:
+        assert command in allowlist
+    assert normalize_declared_node_commands(
+        declared,
+        allowlist=allowlist,
+    ) == declared
+
+
 def test_ios_allowlist_includes_openclaw_screen_record_default() -> None:
     allowlist = resolve_node_command_allowlist(
         platform="iOS 18",

@@ -14,6 +14,7 @@ _CANVAS_COMMANDS = (
 )
 _CAMERA_COMMANDS = ("camera.list",)
 _IOS_CAMERA_COMMANDS = (*_CAMERA_COMMANDS, "camera.snap", "camera.clip")
+_ANDROID_CAMERA_COMMANDS = _IOS_CAMERA_COMMANDS
 _LOCATION_COMMANDS = ("location.get",)
 _NOTIFICATION_COMMANDS = ("notifications.list",)
 _ANDROID_NOTIFICATION_COMMANDS = (*_NOTIFICATION_COMMANDS, "notifications.actions")
@@ -21,9 +22,12 @@ _DEVICE_COMMANDS = ("device.info", "device.status")
 _ANDROID_DEVICE_COMMANDS = (*_DEVICE_COMMANDS, "device.permissions", "device.health")
 _CONTACTS_COMMANDS = ("contacts.search",)
 _IOS_CONTACTS_COMMANDS = (*_CONTACTS_COMMANDS, "contacts.add")
+_ANDROID_CONTACTS_COMMANDS = _IOS_CONTACTS_COMMANDS
 _CALENDAR_COMMANDS = ("calendar.events",)
 _IOS_CALENDAR_COMMANDS = (*_CALENDAR_COMMANDS, "calendar.add")
+_ANDROID_CALENDAR_COMMANDS = _IOS_CALENDAR_COMMANDS
 _CALL_LOG_COMMANDS = ("callLog.search",)
+_SMS_COMMANDS = ("sms.send", "sms.search")
 _REMINDERS_COMMANDS = ("reminders.list",)
 _IOS_REMINDERS_COMMANDS = (*_REMINDERS_COMMANDS, "reminders.add")
 _PHOTOS_COMMANDS = ("photos.latest",)
@@ -72,14 +76,15 @@ _PLATFORM_DEFAULTS: dict[str, tuple[str, ...]] = {
     ),
     "android": (
         *_CANVAS_COMMANDS,
-        *_CAMERA_COMMANDS,
+        *_ANDROID_CAMERA_COMMANDS,
         *_LOCATION_COMMANDS,
         *_ANDROID_NOTIFICATION_COMMANDS,
         "system.notify",
         *_ANDROID_DEVICE_COMMANDS,
-        *_CONTACTS_COMMANDS,
-        *_CALENDAR_COMMANDS,
+        *_ANDROID_CONTACTS_COMMANDS,
+        *_ANDROID_CALENDAR_COMMANDS,
         *_CALL_LOG_COMMANDS,
+        *_SMS_COMMANDS,
         *_REMINDERS_COMMANDS,
         *_PHOTOS_COMMANDS,
         *_MOTION_COMMANDS,
