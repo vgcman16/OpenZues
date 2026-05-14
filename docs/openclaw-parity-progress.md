@@ -8,9 +8,9 @@
 - Estimated chat/session contract subfamily parity: ~99.987% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `artifacts.list` / `artifacts.get` / `artifacts.download`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.995%;
   it is no longer the active queue head.
-- Estimated packaging/companion app breadth: ~9.5% after QR setup-code
+- Estimated packaging/companion app breadth: ~9.6% after QR setup-code
   safety/SecretRef slices, local QR token/password SecretRef resolution,
-  explicit-auth hard-requirement parity,
+  explicit-auth hard-requirement and auth-before-URL ordering parity,
   bind/remote/public URL derivation and validation, custom-loopback bind
   parity, device pairing CLI
   list/approve/mutation coverage, approve preview gateway/auth flag
@@ -25228,6 +25228,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_cli.py -q -k "qr_"` (`33 passed, 616 deselected`), `ruff check
   src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `8b546000`.
+
+- Native `openzues qr` now resolves the setup-code auth label before resolving
+  the gateway URL, matching OpenClaw's `resolvePairingSetupFromConfig` order so
+  explicit missing auth errors take precedence over loopback or remote URL
+  preflight errors. This closes `OZ-COMP-001BG`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~9.6%.
+- Verified QR auth-before-URL ordering with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_auth_error_precedes_loopback_url_resolution_before_token_issue -q`
+  (`1 failed` before implementation because the loopback URL error won, then
+  `1 passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py -q
+  -k "qr_"` (`34 passed, 616 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+  --check`. Source/test checkpointed in `894a0bb0`.
 
 ## References
 
