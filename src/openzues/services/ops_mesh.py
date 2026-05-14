@@ -5985,6 +5985,126 @@ def _zalo_inbound_session_context(
     )
 
 
+def _googlechat_inbound_mapping(value: object) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _googlechat_inbound_optional_string(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _googlechat_webhook_event(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    common = _googlechat_inbound_mapping(payload.get("commonEventObject"))
+    chat = _googlechat_inbound_mapping(payload.get("chat"))
+    message_payload = _googlechat_inbound_mapping(chat.get("messagePayload"))
+    if (
+        str(common.get("hostApp") or "").strip().upper() == "CHAT"
+        and message_payload
+    ):
+        return {
+            "type": "MESSAGE",
+            "space": message_payload.get("space"),
+            "message": message_payload.get("message"),
+            "user": chat.get("user"),
+            "eventTime": chat.get("eventTime"),
+        }
+    return payload
+
+
+def _googlechat_webhook_event_type(event: Mapping[str, Any]) -> str | None:
+    return _googlechat_inbound_optional_string(event.get("type") or event.get("eventType"))
+
+
+def _googlechat_webhook_message(event: Mapping[str, Any]) -> Mapping[str, Any]:
+    return _googlechat_inbound_mapping(event.get("message"))
+
+
+def _googlechat_webhook_event_text(event: Mapping[str, Any]) -> str | None:
+    message = _googlechat_webhook_message(event)
+    text = _googlechat_inbound_optional_string(
+        message.get("argumentText") or message.get("text")
+    )
+    if text is not None:
+        return text
+    attachments = message.get("attachment")
+    if isinstance(attachments, Sequence) and not isinstance(attachments, (str, bytes)):
+        if attachments:
+            return "<media:attachment>"
+    return None
+
+
+def _googlechat_webhook_inbound_message_id(event: Mapping[str, Any]) -> str | None:
+    return _googlechat_inbound_optional_string(_googlechat_webhook_message(event).get("name"))
+
+
+@dataclass(frozen=True, slots=True)
+class _GoogleChatInboundSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    sender_id: str
+    sender_name: str | None
+    conversation_id: str
+    conversation_type: str
+    reply_to: str
+    reply_to_id: str | None
+
+
+def _googlechat_inbound_session_context(
+    event: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _GoogleChatInboundSessionContext:
+    space = _googlechat_inbound_mapping(event.get("space"))
+    message = _googlechat_webhook_message(event)
+    sender = _googlechat_inbound_mapping(message.get("sender")) or _googlechat_inbound_mapping(
+        event.get("user")
+    )
+    space_id = _googlechat_inbound_optional_string(space.get("name"))
+    if space_id is None:
+        raise GatewayOutboundRuntimeUnavailableError(
+            "Google Chat inbound message is missing space name."
+        )
+    sender_id = _googlechat_inbound_optional_string(sender.get("name"))
+    if sender_id is None:
+        raise GatewayOutboundRuntimeUnavailableError(
+            "Google Chat inbound message is missing sender id."
+        )
+    space_type = str(space.get("type") or "").strip().upper()
+    is_direct = space_type == "DM"
+    conversation_type = "direct" if is_direct else "channel"
+    peer_kind: ConversationTargetPeerKind = "direct" if is_direct else "channel"
+    peer_id = f"googlechat:{space_id}"
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    conversation_target = ConversationTargetView(
+        channel="googlechat",
+        account_id=normalized_account_id,
+        peer_kind=peer_kind,
+        peer_id=peer_id,
+    )
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    thread = _googlechat_inbound_mapping(message.get("thread"))
+    return _GoogleChatInboundSessionContext(
+        conversation_target=conversation_target,
+        session_key=session_key,
+        sender_id=sender_id,
+        sender_name=_googlechat_inbound_optional_string(sender.get("displayName")),
+        conversation_id=space_id,
+        conversation_type=conversation_type,
+        reply_to=f"googlechat:{space_id}",
+        reply_to_id=_googlechat_inbound_optional_string(thread.get("name")),
+    )
+
+
 GOOGLE_CHAT_API_BASE_URL = "https://chat.googleapis.com/v1"
 GOOGLE_CHAT_UPLOAD_BASE_URL = "https://chat.googleapis.com/upload/v1"
 
@@ -20566,6 +20686,83 @@ class OpsMeshService:
             result["skips"] = skips
         if not deliveries and not skips:
             inbound_message_id = _zalo_inbound_message_id(payload)
+            if inbound_message_id is not None:
+                result["inboundMessageId"] = inbound_message_id
+        return result
+
+    async def handle_googlechat_webhook(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        event = _googlechat_webhook_event(payload)
+        event_type = _googlechat_webhook_event_type(event)
+        event_count = 1 if event_type is not None else 0
+        deliveries: list[dict[str, object]] = []
+        if event_type == "MESSAGE":
+            text = _googlechat_webhook_event_text(event)
+            if text is not None:
+                if self.session_delivery_service is None:
+                    raise GatewayOutboundRuntimeUnavailableError(
+                        "Google Chat inbound session delivery is unavailable."
+                    )
+                context = _googlechat_inbound_session_context(
+                    event,
+                    account_id=account_id,
+                )
+                delivery_result = await self.session_delivery_service(
+                    context.session_key,
+                    text,
+                )
+                delivery_message_id = _session_delivery_message_id(delivery_result)
+                reply: dict[str, object] = {
+                    "to": context.reply_to,
+                    "originatingTo": context.reply_to,
+                }
+                if context.reply_to_id is not None:
+                    reply["replyToId"] = context.reply_to_id
+                    reply["replyToIdFull"] = context.reply_to_id
+                delivery: dict[str, object] = {
+                    "eventType": event_type,
+                    "sessionKey": context.session_key,
+                    "text": text,
+                    "senderId": context.sender_id,
+                    "conversationId": context.conversation_id,
+                    "conversationType": context.conversation_type,
+                    "conversationTarget": context.conversation_target.model_dump(
+                        mode="json"
+                    ),
+                    "reply": reply,
+                    "delivery": {"runtime": "session-backed"},
+                }
+                if delivery_message_id is not None:
+                    delivery["messageId"] = delivery_message_id
+                inbound_message_id = _googlechat_webhook_inbound_message_id(event)
+                if inbound_message_id is not None:
+                    delivery["inboundMessageId"] = inbound_message_id
+                timestamp = _timestamp_ms(
+                    _googlechat_inbound_optional_string(event.get("eventTime"))
+                )
+                if timestamp is not None:
+                    delivery["timestamp"] = timestamp
+                if context.sender_name is not None:
+                    delivery["senderName"] = context.sender_name
+                deliveries.append(delivery)
+        result: dict[str, object] = {
+            "ok": event_type is not None,
+            "channel": "googlechat",
+            "eventType": event_type or "unknown",
+            "eventCount": event_count,
+            "deliveredCount": len(deliveries),
+        }
+        normalized_account_id = normalize_optional_account_id(account_id)
+        if normalized_account_id is not None:
+            result["accountId"] = normalized_account_id
+        if deliveries:
+            result["deliveries"] = deliveries
+        elif event_type is not None:
+            inbound_message_id = _googlechat_webhook_inbound_message_id(event)
             if inbound_message_id is not None:
                 result["inboundMessageId"] = inbound_message_id
         return result

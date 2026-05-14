@@ -36952,6 +36952,105 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_zalo_media(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_handle_googlechat_webhook_delivers_addon_message(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "googlechat-session-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_googlechat_webhook(
+        {
+            "commonEventObject": {"hostApp": "CHAT"},
+            "authorizationEventObject": {"systemIdToken": "addon-token"},
+            "chat": {
+                "eventTime": "2026-03-02T00:00:00.000Z",
+                "user": {
+                    "name": "users/12345",
+                    "displayName": "Test User",
+                    "email": "test@example.com",
+                },
+                "messagePayload": {
+                    "space": {
+                        "name": "spaces/AAA",
+                        "type": "ROOM",
+                        "displayName": "Ops Room",
+                    },
+                    "message": {
+                        "name": "spaces/AAA/messages/msg-1",
+                        "text": "Hello from add-on",
+                        "thread": {"name": "spaces/AAA/threads/thread-1"},
+                    },
+                },
+            },
+        },
+        account_id="workspace",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="googlechat",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="googlechat:spaces/AAA",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "Hello from add-on")]
+    assert result == {
+        "ok": True,
+        "channel": "googlechat",
+        "accountId": "workspace",
+        "eventType": "MESSAGE",
+        "eventCount": 1,
+        "deliveredCount": 1,
+        "deliveries": [
+            {
+                "eventType": "MESSAGE",
+                "messageId": "googlechat-session-message-1",
+                "inboundMessageId": "spaces/AAA/messages/msg-1",
+                "timestamp": 1772409600000,
+                "sessionKey": expected_session_key,
+                "text": "Hello from add-on",
+                "senderId": "users/12345",
+                "senderName": "Test User",
+                "conversationId": "spaces/AAA",
+                "conversationType": "channel",
+                "conversationTarget": expected_target.model_dump(mode="json"),
+                "reply": {
+                    "to": "googlechat:spaces/AAA",
+                    "originatingTo": "googlechat:spaces/AAA",
+                    "replyToId": "spaces/AAA/threads/thread-1",
+                    "replyToIdFull": "spaces/AAA/threads/thread-1",
+                },
+                "delivery": {"runtime": "session-backed"},
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_handle_zalo_webhook_delivers_direct_text_message(
     tmp_path: Path,
 ) -> None:
