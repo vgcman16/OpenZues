@@ -160,7 +160,7 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.9999995%
+- The provider-native inbound/outbound breadth family is estimated at ~99.9999996%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Matrix implicit reply
   fanout, IRC media attachment formatting, Discord multi-media implicit reply
@@ -173,7 +173,7 @@ Current percentage rollup:
   fallback, QQBot file-media text follow-up delivery, QQBot direct image/video
   media text follow-up delivery, QQBot inline media text ordering/result
   metadata, direct outbound `MEDIA:` / `[[audio_as_voice]]` /
-  `[[reply_to:...]]` directive lifting,
+  `[[reply_to:...]]` / `[[reply_to_current]]` directive lifting,
   LINE signed webhook
   ingress, and
   LINE text webhook session delivery plus
@@ -1558,11 +1558,11 @@ Direct audio-as-voice media sends now also preserve OpenClaw's
 provider-backed runtime delivery, and saved failed-send replay formatting.
 Gateway `send` message bodies now also run the bounded OpenClaw outbound
 payload directive normalization for `[[reply_to:...]]`,
-`[[audio_as_voice]]`, and line-start `MEDIA:` entries before channel delivery,
-projecting reply tags into `replyToId` metadata while keeping directive
-markers out of visible outbound text. Remaining reply-directive parity is
-`[[reply_to_current]]` resolution against current-message context in the direct
-send path.
+`[[reply_to_current]]`, `[[audio_as_voice]]`, and line-start `MEDIA:` entries
+before channel delivery, projecting explicit reply tags into `replyToId`
+metadata while keeping directive markers out of visible outbound text.
+Remaining reply-directive parity is `[[reply_to_current]]` resolution against
+current-message context in the direct send path.
 Telegram native poll route sends now also forward OpenClaw's multi-select
 intent to Bot API payloads with `allows_multiple_answers`, preserving explicit
 multi-select and default single-choice behavior alongside anonymous, duration,
