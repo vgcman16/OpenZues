@@ -11234,7 +11234,20 @@ def _openclaw_update_read_package_version(root: Path) -> str | None:
 
 
 def _openclaw_update_normalize_package_target(value: object) -> str:
-    return value.strip() if isinstance(value, str) else ""
+    target = value.strip() if isinstance(value, str) else ""
+    if not target:
+        return ""
+    for package_name in (_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,):
+        normalized_package_name = package_name.strip()
+        if not normalized_package_name:
+            continue
+        if target == normalized_package_name:
+            return ""
+        prefix = f"{normalized_package_name}@"
+        if target.startswith(prefix):
+            tag = target[len(prefix) :].strip()
+            return tag
+    return target
 
 
 def _openclaw_update_is_main_package_target(value: object) -> bool:

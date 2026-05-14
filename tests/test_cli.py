@@ -28982,6 +28982,36 @@ def test_update_dry_run_json_uses_stored_update_channel(
     assert "Run global package manager update with spec openzues@beta" in payload["actions"]
 
 
+def test_update_dry_run_json_normalizes_package_name_prefixed_tag(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "npm@10.0.0"}),
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+
+    def fake_fetch(target: str, *, timeout_seconds: float | None = None) -> dict[str, object]:
+        del timeout_seconds
+        calls.append(target)
+        return {"target": target, "version": "2.0.0-beta.1", "nodeEngine": None}
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_openclaw_update_fetch_package_target_status", fake_fetch)
+
+    result = runner.invoke(app, ["update", "--dry-run", "--json", "--tag", "openzues@beta"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["tag"] == "openzues@beta"
+    assert payload["targetVersion"] == "2.0.0-beta.1"
+    assert "Run global package manager update with spec openzues@beta" in payload["actions"]
+    assert calls == ["beta"]
+
+
 def test_update_dry_run_json_falls_back_beta_channel_to_latest(
     tmp_path,
     monkeypatch,
