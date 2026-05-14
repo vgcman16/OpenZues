@@ -13366,3 +13366,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and packaging/companion breadth moves to ~10.3%. Continue companion-app
   device flows, packaging/distribution, ACP lifecycle, provider action
   breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native device bootstrap token handling now
+  loads normalized persisted profiles for valid trimmed bootstrap tokens,
+  matching OpenClaw's token profile lookup helper. Source/test checkpointed in
+  `31a935c6`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~10.4%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
