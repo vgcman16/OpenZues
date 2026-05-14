@@ -554,6 +554,7 @@ class _GatewaySendMessageDirectives:
     text: str
     media_urls: list[str]
     reply_to_id: str | None
+    reply_to_current: bool
     audio_as_voice: bool
 
 
@@ -6944,6 +6945,7 @@ class GatewayNodeMethodService:
                     "messageThreadId",
                     "replyToId",
                     "replyToMessageId",
+                    "currentMessageId",
                     "silent",
                     "forceDocument",
                     "channelData",
@@ -7025,6 +7027,20 @@ class GatewayNodeMethodService:
             )
             if reply_to_id is None:
                 reply_to_id = message_directives.reply_to_id
+            current_message_id = (
+                _optional_gateway_current_message_id(
+                    payload.get("currentMessageId"),
+                    label="currentMessageId",
+                )
+                if "currentMessageId" in payload
+                else None
+            )
+            if (
+                reply_to_id is None
+                and message_directives.reply_to_current
+                and current_message_id is not None
+            ):
+                reply_to_id = current_message_id
             silent = (
                 _optional_bool(payload.get("silent"), label="silent")
                 if "silent" in payload
@@ -20984,6 +21000,14 @@ def _optional_normalized_string(value: object, *, label: str) -> str | None:
     return trimmed or None
 
 
+def _optional_gateway_current_message_id(value: object, *, label: str) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        raise ValueError(f"{label} must be a string or number")
+    return str(value).strip() or None
+
+
 def _optional_date_string(value: object, *, label: str) -> str | None:
     if value is None:
         return None
@@ -22860,6 +22884,7 @@ def _parse_gateway_send_message_directives(message: str) -> _GatewaySendMessageD
     text = "\n".join(kept_lines)
     audio_as_voice = _GATEWAY_SEND_AUDIO_DIRECTIVE_RE.search(text) is not None
     reply_to_id: str | None = None
+    reply_to_current = _GATEWAY_SEND_REPLY_CURRENT_DIRECTIVE_RE.search(text) is not None
 
     def replace_reply(match: re.Match[str]) -> str:
         nonlocal reply_to_id
@@ -22875,6 +22900,7 @@ def _parse_gateway_send_message_directives(message: str) -> _GatewaySendMessageD
         text=_normalize_gateway_send_directive_text(text),
         media_urls=media_urls,
         reply_to_id=reply_to_id,
+        reply_to_current=reply_to_current,
         audio_as_voice=audio_as_voice,
     )
 

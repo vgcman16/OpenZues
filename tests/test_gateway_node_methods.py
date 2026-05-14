@@ -123796,6 +123796,80 @@ async def test_send_parses_inline_reply_audio_and_media_directives() -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_resolves_reply_to_current_directive_from_current_message_id(
+) -> None:
+    calls: list[dict[str, object | None]] = []
+
+    async def fake_send_channel_message_service(
+        *,
+        channel: str,
+        to: str,
+        message: str,
+        account_id: str | None,
+        agent_id: str | None,
+        thread_id: str | None,
+        session_key: str | None,
+        idempotency_key: str,
+        reply_to_id: str | None = None,
+    ) -> dict[str, object]:
+        calls.append(
+            {
+                "channel": channel,
+                "to": to,
+                "message": message,
+                "account_id": account_id,
+                "agent_id": agent_id,
+                "thread_id": thread_id,
+                "session_key": session_key,
+                "idempotency_key": idempotency_key,
+                "reply_to_id": reply_to_id,
+            }
+        )
+        return {
+            "ok": True,
+            "messageId": "reply-current-77",
+            "sessionKey": "launch:mode:workspace_affinity:channel:telegram:peer:chat:ops",
+            "deliveryId": 13,
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        send_channel_message_service=fake_send_channel_message_service,
+    )
+
+    payload = await service.call(
+        "send",
+        {
+            "to": " chat:ops ",
+            "message": "[[reply_to_current]] Reply body",
+            "currentMessageId": "message-current-42",
+            "channel": "telegram",
+            "idempotencyKey": "idem-send-reply-current-directive",
+        },
+    )
+
+    assert calls == [
+        {
+            "channel": "telegram",
+            "to": "chat:ops",
+            "message": "Reply body",
+            "account_id": None,
+            "agent_id": None,
+            "thread_id": None,
+            "session_key": None,
+            "idempotency_key": "idem-send-reply-current-directive",
+            "reply_to_id": "message-current-42",
+        }
+    ]
+    assert payload == {
+        "ok": True,
+        "messageId": "reply-current-77",
+        "sessionKey": "launch:mode:workspace_affinity:channel:telegram:peer:chat:ops",
+        "deliveryId": 13,
+    }
+
+
+@pytest.mark.asyncio
 async def test_send_normalizes_sandbox_workspace_media_paths_from_session_metadata(
     tmp_path,
 ) -> None:

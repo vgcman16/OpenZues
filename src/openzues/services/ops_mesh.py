@@ -13179,7 +13179,7 @@ def _strip_direct_channel_audio_directive(message: str) -> tuple[str, bool]:
     return "\n".join(normalized_lines).strip(), True
 
 
-def _strip_direct_channel_reply_directive(message: str) -> tuple[str, str | None]:
+def _strip_direct_channel_reply_directive(message: str) -> tuple[str, str | None, bool]:
     reply_to_id: str | None = None
 
     def replace(match: re.Match[str]) -> str:
@@ -13192,16 +13192,16 @@ def _strip_direct_channel_reply_directive(message: str) -> tuple[str, str | None
     has_reply_to = _DIRECT_CHANNEL_REPLY_TO_RE.search(message) is not None
     has_reply_to_current = _DIRECT_CHANNEL_REPLY_TO_CURRENT_RE.search(message) is not None
     if not has_reply_to and not has_reply_to_current:
-        return message, None
+        return message, None, False
     cleaned = _DIRECT_CHANNEL_REPLY_TO_RE.sub(replace, message)
     cleaned = _DIRECT_CHANNEL_REPLY_TO_CURRENT_RE.sub(" ", cleaned)
     normalized_lines = [" ".join(line.split()) for line in cleaned.splitlines()]
-    return "\n".join(normalized_lines).strip(), reply_to_id
+    return "\n".join(normalized_lines).strip(), reply_to_id, has_reply_to_current
 
 
 def _split_direct_channel_media_directives(
     message: str,
-) -> tuple[str, list[str], bool, str | None]:
+) -> tuple[str, list[str], bool, str | None, bool]:
     kept_lines: list[str] = []
     media_urls: list[str] = []
     for line in str(message or "").splitlines():
@@ -13228,10 +13228,12 @@ def _split_direct_channel_media_directives(
     text_without_audio, audio_as_voice = _strip_direct_channel_audio_directive(
         text_without_media
     )
-    text_without_reply, reply_to_id = _strip_direct_channel_reply_directive(
-        text_without_audio
-    )
-    return text_without_reply, media_urls, audio_as_voice, reply_to_id
+    (
+        text_without_reply,
+        reply_to_id,
+        reply_to_current,
+    ) = _strip_direct_channel_reply_directive(text_without_audio)
+    return text_without_reply, media_urls, audio_as_voice, reply_to_id, reply_to_current
 
 
 def _normalize_gateway_client_scopes(value: object) -> tuple[str, ...]:
@@ -31674,6 +31676,7 @@ class OpsMeshService:
         reply_to_id_source: Literal["explicit", "implicit"] | None = None,
         reply_to_mode: Literal["off", "first", "all", "batched"] | None = None,
         reply_token: str | None = None,
+        current_message_id: str | int | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
         channel_data: dict[str, object] | None = None,
@@ -31706,6 +31709,7 @@ class OpsMeshService:
             directive_media_urls,
             directive_audio_as_voice,
             directive_reply_to_id,
+            directive_reply_to_current,
         ) = _split_direct_channel_media_directives(message)
         combined_media_urls = list(media_urls or [])
         combined_media_urls.extend(directive_media_urls)
@@ -31776,6 +31780,8 @@ class OpsMeshService:
         if normalized_template_message is not None:
             payload["templateMessage"] = normalized_template_message
         normalized_reply_to_id = str(reply_to_id or "").strip() or directive_reply_to_id
+        if normalized_reply_to_id is None and directive_reply_to_current:
+            normalized_reply_to_id = _normalize_optional_payload_string(current_message_id)
         if normalized_reply_to_id is not None:
             payload["replyToId"] = normalized_reply_to_id
             normalized_reply_to_id_source = (
