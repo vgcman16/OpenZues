@@ -13373,3 +13373,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   packaging/companion breadth moves to ~10.4%. Continue companion-app device
   flows, packaging/distribution, ACP lifecycle, provider action breadth, or
   setup/onboarding gaps.
+- Current queue-head adjustment: native device bootstrap token handling can
+  now revoke one specific trimmed token, remove it from
+  `devices/bootstrap.json`, and return the removed record. Source/test
+  checkpointed in `363ce2d3`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~10.5%. Continue companion-app
+  device flows, packaging/distribution, ACP lifecycle, provider action
+  breadth, or setup/onboarding gaps.
