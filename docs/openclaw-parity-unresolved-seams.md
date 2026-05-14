@@ -1,6 +1,6 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-05-12
+Updated: 2026-05-14
 
 Current percentage rollup:
 
@@ -13351,3 +13351,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   packaging/companion breadth moves to ~10.1%. Continue companion-app device
   flows, packaging/distribution, ACP lifecycle, provider action breadth, or
   setup/onboarding gaps.
+- Current queue-head adjustment: native device pairing now preserves
+  interactive visibility when a pending request is superseded, distinguishing
+  explicit `silent=false` from omitted `silent` in SQLite-backed pending
+  requests and applying OpenClaw's refresh/replacement rule. Source/test
+  checkpointed in `fd385434`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~10.2%. Continue companion-app
+  device flows, packaging/distribution, ACP lifecycle, provider action
+  breadth, or setup/onboarding gaps.
