@@ -43,6 +43,28 @@ def test_ios_allowlist_includes_openclaw_screen_record_default() -> None:
     ) == ("screen.record",)
 
 
+def test_ios_allowlist_includes_openclaw_chat_and_talk_defaults() -> None:
+    allowlist = resolve_node_command_allowlist(
+        platform="iPadOS 18",
+        device_family="iPad",
+    )
+
+    declared = (
+        "chat.push",
+        "talk.ptt.start",
+        "talk.ptt.stop",
+        "talk.ptt.cancel",
+        "talk.ptt.once",
+    )
+
+    for command in declared:
+        assert command in allowlist
+    assert normalize_declared_node_commands(
+        declared,
+        allowlist=allowlist,
+    ) == declared
+
+
 def test_explicit_allow_commands_can_enable_screen_record() -> None:
     allowlist = resolve_node_command_allowlist(
         platform="ios",

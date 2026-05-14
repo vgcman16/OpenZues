@@ -24,6 +24,13 @@ _CALL_LOG_COMMANDS = ("callLog.search",)
 _REMINDERS_COMMANDS = ("reminders.list",)
 _PHOTOS_COMMANDS = ("photos.latest",)
 _MOTION_COMMANDS = ("motion.activity", "motion.pedometer")
+_CHAT_COMMANDS = ("chat.push",)
+_IOS_TALK_COMMANDS = (
+    "talk.ptt.start",
+    "talk.ptt.stop",
+    "talk.ptt.cancel",
+    "talk.ptt.once",
+)
 _SCREEN_COMMANDS = ("screen.snapshot",)
 _IOS_SCREEN_COMMANDS = ("screen.record",)
 _IOS_SYSTEM_COMMANDS = ("system.notify",)
@@ -52,6 +59,8 @@ _PLATFORM_DEFAULTS: dict[str, tuple[str, ...]] = {
         *_REMINDERS_COMMANDS,
         *_PHOTOS_COMMANDS,
         *_MOTION_COMMANDS,
+        *_CHAT_COMMANDS,
+        *_IOS_TALK_COMMANDS,
         *_IOS_SCREEN_COMMANDS,
         *_IOS_SYSTEM_COMMANDS,
     ),
