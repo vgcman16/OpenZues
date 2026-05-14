@@ -14,6 +14,25 @@ def test_macos_allowlist_includes_screen_snapshot_but_not_screen_record() -> Non
     assert "screen.record" not in allowlist
 
 
+def test_macos_allowlist_includes_openclaw_exec_approval_commands() -> None:
+    allowlist = resolve_node_command_allowlist(
+        platform="macOS 26.3.1",
+        device_family="Mac",
+    )
+
+    declared = (
+        "system.execApprovals.get",
+        "system.execApprovals.set",
+    )
+
+    for command in declared:
+        assert command in allowlist
+    assert normalize_declared_node_commands(
+        declared,
+        allowlist=allowlist,
+    ) == declared
+
+
 def test_windows_allowlist_matches_openclaw_companion_defaults() -> None:
     allowlist = resolve_node_command_allowlist(
         platform="Windows 11",

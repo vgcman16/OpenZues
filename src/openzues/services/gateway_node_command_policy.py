@@ -50,6 +50,11 @@ _SYSTEM_COMMANDS = (
     "system.notify",
     "browser.proxy",
 )
+_MACOS_SYSTEM_COMMANDS = (
+    *_SYSTEM_COMMANDS,
+    "system.execApprovals.get",
+    "system.execApprovals.set",
+)
 _UNKNOWN_PLATFORM_COMMANDS = (
     *_CANVAS_COMMANDS,
     *_CAMERA_COMMANDS,
@@ -99,7 +104,7 @@ _PLATFORM_DEFAULTS: dict[str, tuple[str, ...]] = {
         *_REMINDERS_COMMANDS,
         *_PHOTOS_COMMANDS,
         *_MOTION_COMMANDS,
-        *_SYSTEM_COMMANDS,
+        *_MACOS_SYSTEM_COMMANDS,
         *_SCREEN_COMMANDS,
     ),
     "desktop": _SYSTEM_COMMANDS,
