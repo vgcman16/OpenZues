@@ -11438,6 +11438,59 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_native_adapter_
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_lifts_media_directive_for_native_adapter(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-media-directive"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    native_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_native_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        native_requests.append(request)
+        return {"messageId": "native-media-directive-1"}
+
+    runtime = GatewayOutboundRuntimeService()
+    runtime.bind_native_message_deliverer(
+        channel="slack",
+        account_id="workspace-bot",
+        deliverer=fake_native_delivery,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=runtime,
+    )
+
+    await service.send_direct_channel_message(
+        channel="slack",
+        to="channel:C123",
+        message="Ship it\nMEDIA:https://example.com/chart.png",
+        account_id="workspace-bot",
+        idempotency_key="idem-media-directive-send",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(native_requests) == 1
+    assert native_requests[0].message == "Ship it"
+    assert native_requests[0].media_urls == ("https://example.com/chart.png",)
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == "Ship it"
+    assert delivery["event_payload"]["mediaUrl"] == "https://example.com/chart.png"
+    assert delivery["event_payload"]["mediaUrls"] == ["https://example.com/chart.png"]
+
+
+@pytest.mark.asyncio
 async def test_provider_result_persistence_keeps_message_id_runtime_and_meta() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-provider-result-metadata"
     shutil.rmtree(tmp_path, ignore_errors=True)

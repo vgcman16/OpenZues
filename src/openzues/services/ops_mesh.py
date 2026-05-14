@@ -13148,6 +13148,41 @@ def _normalize_direct_channel_media_urls(
     return normalized
 
 
+def _looks_like_direct_channel_media_source(value: str) -> bool:
+    candidate = value.strip()
+    if not candidate:
+        return False
+    if re.match(r"(?i)^(https?://|file://|/|[a-z]:[\\/]|\\\\|\.{1,2}/|~)", candidate):
+        return True
+    return ("/" in candidate or "\\" in candidate) and "." in candidate
+
+
+def _split_direct_channel_media_directives(message: str) -> tuple[str, list[str]]:
+    kept_lines: list[str] = []
+    media_urls: list[str] = []
+    for line in str(message or "").splitlines():
+        stripped = line.strip()
+        if not stripped.upper().startswith("MEDIA:"):
+            kept_lines.append(line)
+            continue
+        payload = stripped[len("MEDIA:") :].strip()
+        candidates = [
+            part.strip().strip("`\"'[](){} ,")
+            for part in payload.split()
+            if part.strip()
+        ]
+        valid_candidates = [
+            candidate
+            for candidate in candidates
+            if _looks_like_direct_channel_media_source(candidate)
+        ]
+        if not valid_candidates:
+            kept_lines.append(line)
+            continue
+        media_urls.extend(valid_candidates)
+    return "\n".join(kept_lines).strip(), media_urls
+
+
 def _normalize_gateway_client_scopes(value: object) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
         return ()
@@ -31615,7 +31650,14 @@ class OpsMeshService:
         )
         if conversation_target is None:
             raise ValueError("send requires an explicit channel target")
-        normalized_media_urls = _normalize_direct_channel_media_urls(media_urls=media_urls)
+        message_without_media_directives, directive_media_urls = (
+            _split_direct_channel_media_directives(message)
+        )
+        combined_media_urls = list(media_urls or [])
+        combined_media_urls.extend(directive_media_urls)
+        normalized_media_urls = _normalize_direct_channel_media_urls(
+            media_urls=combined_media_urls
+        )
         normalized_location = _normalize_line_location_payload(location)
         normalized_flex_message = _normalize_line_flex_message_payload(flex_message)
         normalized_template_message = _normalize_line_template_message_payload(
@@ -31623,9 +31665,13 @@ class OpsMeshService:
         )
         normalized_channel_data = dict(channel_data) if channel_data is not None else None
         has_channel_data_payload = bool(normalized_channel_data)
-        normalized_message = "" if has_channel_data_payload and not message.strip() else message
+        normalized_message = (
+            ""
+            if has_channel_data_payload and not message_without_media_directives.strip()
+            else message_without_media_directives
+        )
         if (
-            not message.strip()
+            not normalized_message.strip()
             and not normalized_media_urls
             and normalized_location is None
             and normalized_flex_message is None
@@ -31661,7 +31707,7 @@ class OpsMeshService:
                 payload["gifPlayback"] = gif_playback
             if audio_as_voice is not None:
                 payload["audioAsVoice"] = audio_as_voice
-            if not message.strip():
+            if not normalized_message.strip():
                 payload["summary"] = _summarize_direct_channel_media(normalized_media_urls)
         if normalized_location is not None:
             payload["location"] = normalized_location
