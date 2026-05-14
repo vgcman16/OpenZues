@@ -4,6 +4,7 @@ import json
 
 from openzues.services.device_bootstrap_tokens import (
     clear_device_bootstrap_tokens,
+    get_bound_device_bootstrap_profile,
     get_device_bootstrap_token_profile,
     issue_device_bootstrap_token,
     revoke_device_bootstrap_token,
@@ -149,3 +150,48 @@ def test_verify_device_bootstrap_token_binds_first_device_identity(
     assert state[issued.token]["deviceId"] == "device-123"
     assert state[issued.token]["publicKey"] == "public-key-123"
     assert isinstance(state[issued.token]["lastUsedAtMs"], int)
+
+
+def test_get_bound_device_bootstrap_profile_requires_verified_identity(
+    tmp_path,
+) -> None:
+    issued = issue_device_bootstrap_token(base_dir=tmp_path)
+
+    before_verify = get_bound_device_bootstrap_profile(
+        base_dir=tmp_path,
+        token=issued.token,
+        device_id="device-123",
+        public_key="public-key-123",
+    )
+    verify_device_bootstrap_token(
+        base_dir=tmp_path,
+        token=issued.token,
+        device_id="device-123",
+        public_key="public-key-123",
+        role="operator",
+        scopes=["operator.read"],
+    )
+    bound = get_bound_device_bootstrap_profile(
+        base_dir=tmp_path,
+        token=f" {issued.token} ",
+        device_id=" device-123 ",
+        public_key=" public-key-123 ",
+    )
+    wrong_identity = get_bound_device_bootstrap_profile(
+        base_dir=tmp_path,
+        token=issued.token,
+        device_id="device-456",
+        public_key="public-key-123",
+    )
+
+    assert before_verify is None
+    assert bound == {
+        "roles": ["node", "operator"],
+        "scopes": [
+            "operator.approvals",
+            "operator.read",
+            "operator.talk.secrets",
+            "operator.write",
+        ],
+    }
+    assert wrong_identity is None

@@ -144,6 +144,29 @@ def verify_device_bootstrap_token(
     return {"ok": True}
 
 
+def get_bound_device_bootstrap_profile(
+    *,
+    base_dir: Path,
+    token: str,
+    device_id: str,
+    public_key: str,
+) -> dict[str, list[str]] | None:
+    found = _find_bootstrap_record_entry(base_dir=base_dir, token=token)
+    if found is None:
+        return None
+    _, _, record = found
+    normalized_device_id = device_id.strip()
+    normalized_public_key = public_key.strip()
+    if not normalized_device_id or not normalized_public_key:
+        return None
+    if (
+        str(record.get("deviceId") or "").strip() != normalized_device_id
+        or str(record.get("publicKey") or "").strip() != normalized_public_key
+    ):
+        return None
+    return _record_bootstrap_profile(record)
+
+
 def _issued_bootstrap_profile(
     *,
     profile: Mapping[str, Iterable[str]] | None,
