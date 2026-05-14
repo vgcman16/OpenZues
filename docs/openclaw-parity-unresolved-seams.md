@@ -13393,3 +13393,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, and packaging/companion breadth moves to ~10.7%.
   Continue companion-app device flows, packaging/distribution, ACP lifecycle,
   provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native device bootstrap token handling now
+  returns a bound bootstrap profile only for the same verified
+  token/device/public-key tuple. Source/test checkpointed in `8e3c7279`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~10.8%. Continue companion-app device flows,
+  packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
