@@ -13626,6 +13626,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity
   moves to ~99.999999993%. Continue installed plugin activation depth,
   provider media edges, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: installed plugin runtime activation source
+  config now receives the same configured-channel activation metadata in
+  `activationSourceConfig.plugins.allow` and
+  `activationSourceConfig.plugins.entries[id].enabled` while keeping raw channel
+  config intact. Source/test checkpointed in `2e8f212c`; repo-wide parity
+  remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity
+  moves to ~99.999999994%. Continue installed plugin activation depth,
+  provider media edges, packaging/distribution, or companion breadth.
 - Current queue-head adjustment: direct provider-native outbound sends now
   lift `MEDIA:` directives out of visible message text and persist/deliver them
   as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;
