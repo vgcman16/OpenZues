@@ -5406,7 +5406,7 @@ def test_msteams_messages_endpoint_rejects_failed_jwt_before_json_body(tmp_path)
 NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET = (
     '["slack", "telegram", "discord", "whatsapp", "zalo", "googlechat", '
     '"nextcloud-talk", "synology-chat", "mattermost", "msteams", "signal", '
-    '"irc", "twitch", "line", "matrix"].includes(routeKind)'
+    '"irc", "twitch", "tlon", "line", "matrix"].includes(routeKind)'
 )
 
 
@@ -5540,6 +5540,18 @@ def test_notification_route_operator_form_offers_twitch_native_routes() -> None:
 
     assert '<option value="twitch">Twitch native route</option>' in template
     assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
+
+
+def test_notification_route_operator_form_offers_tlon_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="tlon">Tlon (Urbit) native route</option>' in template
+    assert '"tlon"' in script
 
 
 def test_gateway_bootstrap_endpoint_marks_connected_local_lane_ready_without_api_key(
