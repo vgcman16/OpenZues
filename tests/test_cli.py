@@ -8206,6 +8206,20 @@ def test_logs_follow_reuses_cursor_and_prints_file_header_once(monkeypatch) -> N
     assert "second poll" in result.stdout
 
 
+def test_logs_plain_reset_notice_mentions_file_rotation(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / "openzues-2026-05-14.log"
+    log_path.write_text("fresh line\n", encoding="utf-8")
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+
+    result = runner.invoke(app, ["logs", "--cursor", "999", "--plain"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Log cursor reset (file rotated)." in result.stderr
+
+
 def test_sandbox_list_json_returns_openclaw_shaped_inventory(monkeypatch) -> None:
     class FakeDatabase:
         async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:

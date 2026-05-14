@@ -1683,7 +1683,7 @@ def _emit_logs_tail(
     if payload.get("truncated"):
         typer.echo("Log tail truncated (increase --max-bytes).", err=True)
     if payload.get("reset"):
-        typer.echo("Log cursor reset.", err=True)
+        typer.echo("Log cursor reset (file rotated).", err=True)
     lines = payload.get("lines")
     if not isinstance(lines, list) or not lines:
         if empty_notice:
