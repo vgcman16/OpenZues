@@ -186,6 +186,17 @@ class GatewayNodePairingService:
                 persisted_silent = True
             else:
                 persisted_silent = None
+        requested_at_ms = (
+            existing_request.ts
+            if existing_request is not None
+            and _same_pairing_approval_snapshot(
+                existing_request,
+                public_key=resolved_public_key,
+                roles=resolved_roles,
+                scopes=resolved_scopes,
+            )
+            else now_ms
+        )
 
         row, created = await self.database.upsert_gateway_node_pairing_request(
             request_id=str(uuid4()),
@@ -203,7 +214,7 @@ class GatewayNodePairingService:
             scopes=resolved_scopes,
             remote_ip=resolved_remote_ip,
             silent=persisted_silent,
-            requested_at_ms=now_ms,
+            requested_at_ms=requested_at_ms,
             public_key=resolved_public_key,
         )
         request = _request_from_row(row)
@@ -969,6 +980,20 @@ def _role_scoped_token_scopes(role: str, scopes: list[str]) -> list[str]:
         for scope in normalized_scopes
         if not scope.startswith(_OPERATOR_SCOPE_PREFIX)
     ]
+
+
+def _same_pairing_approval_snapshot(
+    request: GatewayNodePairingRequest,
+    *,
+    public_key: str | None,
+    roles: list[str],
+    scopes: list[str],
+) -> bool:
+    return (
+        request.public_key == public_key
+        and set(request.roles) == set(_dedupe_scopes(roles))
+        and set(request.scopes) == set(_dedupe_scopes(scopes))
+    )
 
 
 def _role_scopes_allow(

@@ -268,6 +268,58 @@ async def test_pair_request_preserves_public_key_through_refresh_list_and_approv
 
 
 @pytest.mark.asyncio
+async def test_pair_request_same_approval_snapshot_preserves_original_ts() -> None:
+    service = GatewayNodePairingService(_FakePairingDatabase())
+
+    created = await service.request(
+        node_id="pair-node-queue-stable",
+        public_key="public-key-queue-stable",
+        display_name="Queue Stable Node",
+        platform="ios",
+        version=None,
+        core_version=None,
+        ui_version=None,
+        device_family=None,
+        model_identifier=None,
+        caps=None,
+        commands=None,
+        role="operator",
+        roles=None,
+        scopes=["operator.read"],
+        remote_ip="10.0.0.1",
+        silent=True,
+        now_ms=1_000,
+    )
+    refreshed = await service.request(
+        node_id="pair-node-queue-stable",
+        public_key="public-key-queue-stable",
+        display_name="Queue Stable Node Updated",
+        platform=None,
+        version=None,
+        core_version=None,
+        ui_version=None,
+        device_family=None,
+        model_identifier=None,
+        caps=None,
+        commands=None,
+        role="operator",
+        roles=None,
+        scopes=["operator.read"],
+        remote_ip="10.0.0.2",
+        silent=True,
+        now_ms=2_000,
+    )
+    listed = await service.list_pending()
+
+    assert refreshed["created"] is False
+    assert refreshed["request"]["requestId"] == created["request"]["requestId"]
+    assert refreshed["request"]["displayName"] == "Queue Stable Node Updated"
+    assert refreshed["request"]["remoteIp"] == "10.0.0.2"
+    assert refreshed["request"]["ts"] == 1_000
+    assert listed[0]["ts"] == 1_000
+
+
+@pytest.mark.asyncio
 async def test_pair_request_refresh_preserves_silent_when_omitted() -> None:
     service = GatewayNodePairingService(_FakePairingDatabase())
 
@@ -320,7 +372,7 @@ async def test_pair_request_refresh_preserves_silent_when_omitted() -> None:
             "commands": [],
             "remoteIp": None,
             "silent": True,
-            "ts": 2_000,
+            "ts": 1_000,
         },
         "created": False,
     }
@@ -339,7 +391,7 @@ async def test_pair_request_refresh_preserves_silent_when_omitted() -> None:
             "commands": [],
             "remoteIp": None,
             "silent": True,
-            "ts": 2_000,
+            "ts": 1_000,
             "requiredApproveScopes": ["operator.pairing"],
         }
     ]
@@ -397,7 +449,7 @@ async def test_pair_request_refresh_clears_silent_when_false() -> None:
             "caps": [],
             "commands": [],
             "remoteIp": None,
-            "ts": 2_000,
+            "ts": 1_000,
         },
         "created": False,
     }
@@ -415,7 +467,7 @@ async def test_pair_request_refresh_clears_silent_when_false() -> None:
             "caps": [],
             "commands": [],
             "remoteIp": None,
-            "ts": 2_000,
+            "ts": 1_000,
             "requiredApproveScopes": ["operator.pairing"],
         }
     ]

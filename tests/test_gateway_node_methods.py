@@ -119222,7 +119222,7 @@ async def test_node_pair_request_persists_and_refreshes_openclaw_pending_entries
             "commands": ["canvas.present"],
             "remoteIp": "10.0.0.6",
             "silent": True,
-            "ts": 2_000,
+            "ts": 1_000,
         },
         "created": False,
     }
@@ -119242,7 +119242,7 @@ async def test_node_pair_request_persists_and_refreshes_openclaw_pending_entries
                     "commands": ["canvas.present"],
                     "remoteIp": "10.0.0.6",
                     "silent": True,
-                    "ts": 2_000,
+                    "ts": 1_000,
                     "requiredApproveScopes": ["operator.pairing", "operator.write"],
                 }
         ],
@@ -119345,7 +119345,7 @@ async def test_node_pair_request_refresh_preserves_omitted_fields_and_allows_exp
             "caps": ["voice", "canvas"],
             "commands": ["canvas.present", "system.run"],
             "remoteIp": "10.0.0.5",
-            "ts": 2_000,
+            "ts": 1_000,
         },
         "created": False,
     }
@@ -119364,7 +119364,7 @@ async def test_node_pair_request_refresh_preserves_omitted_fields_and_allows_exp
             "caps": [],
             "commands": [],
             "remoteIp": "10.0.0.5",
-            "ts": 3_000,
+            "ts": 1_000,
         },
         "created": False,
     }
@@ -119383,7 +119383,7 @@ async def test_node_pair_request_refresh_preserves_omitted_fields_and_allows_exp
                 "caps": [],
                 "commands": [],
                 "remoteIp": "10.0.0.5",
-                "ts": 3_000,
+                "ts": 1_000,
                 "requiredApproveScopes": ["operator.pairing"],
             }
         ],
