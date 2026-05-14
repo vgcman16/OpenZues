@@ -25,15 +25,15 @@ Hermes or Warp integration.
 | Chat/session contract subfamily | ~99.987% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.997% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Provider-native inbound/outbound breadth | ~99.99999981% | Near-complete bounded provider path; QQBot route-backed text/media sends, inline tags, structured self-closing media tags, reply sequencing, local media upload, chunked local media upload, voice-to-file fallback, file-media text follow-up delivery, direct image/video media text follow-up delivery, inline media text ordering/result metadata, Matrix route-backed implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, Google Chat add-on body-token webhook ingress, Mattermost native reaction actions, Tlon operator route registration, Feishu/Lark operator route registration, and safe direct outbound MEDIA/audio-as-voice/reply/reply-current stripping plus current-message resolution are checkpointed while broader provider inventory remains open | `docs/openclaw-parity-progress.md` |
-| Runtime/CLI/doctor native bridge | ~99.999999995% | Mostly landed; ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice, logs broken-pipe handling, startup optimization, package channel command metadata, package-prefixed update tags, non-OpenZues git-root rejection, channel plugin activation entries, channel plugin activation source config, packaging, and installed plugin depth are advancing | `docs/openclaw-parity-progress.md` |
+| Runtime/CLI/doctor native bridge | ~99.999999996% | Mostly landed; ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice, logs broken-pipe handling, startup optimization, package channel command metadata, package-prefixed update tags, non-OpenZues git-root rejection, channel plugin activation entries, channel plugin activation source config, channel-scoped activation filters, packaging, and installed plugin depth are advancing | `docs/openclaw-parity-progress.md` |
 | CLI/operator control plane | ~99.99999% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~11.4% | Minimal, active broad parity still open; local QR token/password SecretRef resolution plus SecretRef-template inference, Zalo/plugin-SDK profile-aware pairing approval commands, pending device-pair queue timestamp stability, changed approval-snapshot supersession, interactive supersession visibility, bootstrap profile bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope warnings, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, and Windows companion-node command defaults are now checkpointed; app-advertised dangerous command defaults from `OZ-COMP-001BY` through `OZ-COMP-001CE` are superseded and not counted | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
 
-Latest verified adjustment: `OZ-PROV-001HO` Feishu/Lark operator route
-registration is source/test checkpointed in `5b2c322e`, moving provider-native
-inbound/outbound breadth to ~99.99999981%. Repo-wide OpenClaw parity remains
+Latest verified adjustment: `OZ-PLUGIN-00387` channel-scoped activation
+filtering is source/test checkpointed in `596771d6`, moving runtime/CLI/doctor
+native-bridge parity to ~99.999999996%. Repo-wide OpenClaw parity remains
 estimated at ~99.9%.
 
 ## Current Worktree Boundary
@@ -127,6 +127,11 @@ is now ~99.999999995%.
 Provider queue addendum: `OZ-PROV-001HO` Feishu/Lark operator route
 registration is checkpointed in `5b2c322e`. Provider-native breadth is now
 ~99.99999981%.
+
+Plugin addendum: `OZ-PLUGIN-00387` channel-scoped activation filtering is
+checkpointed in `596771d6`; configured-channel owner activation can now be
+narrowed by explicit channel id. Runtime/CLI/doctor native-bridge parity is now
+~99.999999996%.
 
 Historical companion probes: `OZ-COMP-001BY` through `OZ-COMP-001CE`
 (`deeb546d`, `ddd70a86`, `dc72a787`, `669c3dc0`, `5b9f287b`, `dae05faa`,
@@ -18100,6 +18105,26 @@ companion breadth.
     (`1 failed` before implementation, then `1 passed`), adjacent route form
     proof (`13 passed, 207 deselected`), `node --check`, ruff, and focused
     `git diff --check`.
+
+- [x] `OZ-PLUGIN-00387` channel-scoped activation filtering
+  - Source: `openclaw-main/src/plugins/runtime/runtime-registry-loader.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.test.ts`,
+    `openclaw-main/src/plugins/channel-presence-policy.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_plugin_activation.py`,
+    `tests/test_gateway_plugin_activation.py`
+  - Contract: configured-channel activation planning can be narrowed to an
+    explicit list of requested channel IDs before owner plugin IDs and
+    activation config are built.
+  - Evidence required: focused activation proof, adjacent activation proof,
+    ruff, mypy
+  - Status: checkpointed in `596771d6`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_plugin_activation.py::test_resolve_configured_channel_plugin_plan_filters_explicit_channel_scope -q`
+    (`unexpected keyword argument 'only_channel_ids'` before implementation,
+    then `1 passed`), adjacent activation proof (`10 passed`), ruff, mypy, and
+    focused `git diff --check`.
 
 ## Canonical Checklist Format
 

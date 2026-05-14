@@ -26238,6 +26238,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\web tests\test_app.py`, and focused `git diff --check`.
   Source/test checkpointed in `5b2c322e`.
 
+- Configured-channel plugin activation plans now accept an explicit
+  `only_channel_ids` scope and filter discovered channel owners before building
+  `pluginIds`, `entries`, and activation config, matching OpenClaw's
+  `onlyChannelIds` runtime load behavior. This closes `OZ-PLUGIN-00387`;
+  repo-wide parity remains estimated at ~99.9%, and runtime/CLI/doctor
+  native-bridge parity moves to ~99.999999996%.
+- Verified channel-scoped plugin activation with focused red/green
+  `python -m pytest tests\test_gateway_plugin_activation.py::test_resolve_configured_channel_plugin_plan_filters_explicit_channel_scope -q`
+  (`unexpected keyword argument 'only_channel_ids'` before implementation, then
+  `1 passed`), adjacent activation proof `python -m pytest
+  tests\test_gateway_plugin_activation.py -q` (`10 passed`), `ruff check
+  src\openzues\services\gateway_plugin_activation.py
+  tests\test_gateway_plugin_activation.py`, `mypy
+  src\openzues\services\gateway_plugin_activation.py`, and focused `git diff
+  --check`. Source/test checkpointed in `596771d6`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

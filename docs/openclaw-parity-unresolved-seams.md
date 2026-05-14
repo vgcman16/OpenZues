@@ -13647,6 +13647,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   inbound/outbound breadth moves to ~99.99999981%. Continue provider media
   edges, installed plugin activation depth, packaging/distribution, or
   companion breadth.
+- Current queue-head adjustment: configured-channel plugin activation plans now
+  honor an explicit `only_channel_ids` scope, avoiding accidental activation of
+  every configured channel owner during scoped runtime loads. Source/test
+  checkpointed in `596771d6`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor native-bridge parity moves to ~99.999999996%.
+  Continue provider media edges, installed plugin activation depth,
+  packaging/distribution, or companion breadth.
 - Current queue-head adjustment: direct provider-native outbound sends now
   lift `MEDIA:` directives out of visible message text and persist/deliver them
   as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;
