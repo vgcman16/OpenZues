@@ -13269,3 +13269,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~99.9%, and packaging/companion breadth moves to ~8.9%. Continue
   companion-app device flows, packaging/distribution, ACP lifecycle, provider
   action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now rejects scheme-like
+  path public URLs such as `http:/localhost:notaport` before setup-code
+  generation. Source/test checkpointed in `5dda873e`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~9.0%.
+  Continue companion-app device flows, packaging/distribution, ACP lifecycle,
+  provider action breadth, or setup/onboarding gaps.

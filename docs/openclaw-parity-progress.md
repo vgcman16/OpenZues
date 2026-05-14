@@ -25154,6 +25154,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py`, and focused `git diff --check`. Source/test
   checkpointed in `6ad6f756`.
 
+- Native `openzues qr` now rejects scheme-like path public URLs such as
+  `http:/localhost:notaport` before fallback normalization, matching
+  OpenClaw's setup-code URL parser and preventing malformed input from being
+  emitted as `wss://http`. This closes `OZ-COMP-001BA`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to ~9.0%.
+- Verified QR scheme-like public URL rejection with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_setup_code_only_rejects_scheme_like_path_public_url_before_token_issue -q`
+  (`1 failed` before implementation because a setup code was printed, then `1
+  passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py -q -k
+  "qr_"` (`28 passed, 616 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+  --check`. Source/test checkpointed in `5dda873e`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)
