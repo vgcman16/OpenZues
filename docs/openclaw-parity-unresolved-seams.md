@@ -13261,3 +13261,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~99.9%, and packaging/companion breadth moves to ~8.8%. Continue
   companion-app device flows, packaging/distribution, ACP lifecycle, provider
   action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now honors
+  `gateway.bind=tailnet` through a fakeable 100.64/10 probe, validates the
+  derived tailnet setup URL through mobile pairing cleartext policy, and
+  returns the OpenClaw-shaped missing-tailnet-IP error before token issuance.
+  Source/test checkpointed in `6ad6f756`; repo-wide parity remains estimated
+  at ~99.9%, and packaging/companion breadth moves to ~8.9%. Continue
+  companion-app device flows, packaging/distribution, ACP lifecycle, provider
+  action breadth, or setup/onboarding gaps.

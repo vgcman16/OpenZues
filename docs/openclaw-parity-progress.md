@@ -25138,6 +25138,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py`, and focused `git diff --check`. Source/test
   checkpointed in `c4f1acca`.
 
+- Native `openzues qr` now supports `gateway.bind=tailnet` by selecting a
+  fakeable 100.64/10 tailnet IPv4, validating the derived setup URL through
+  the shared mobile pairing policy, and returning the upstream-shaped
+  `gateway.bind=tailnet set, but no tailnet IP was found.` error before token
+  issuance when no tailnet address is available. This closes `OZ-COMP-001AZ`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~8.9%.
+- Verified QR tailnet bind handling with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_rejects_tailnet_bind_cleartext_url_before_token_issue tests\test_cli.py::test_qr_tailnet_bind_reports_missing_tailnet_ip_before_token_issue -q`
+  (`2 failed` before implementation because tailnet bind config fell through
+  to the generic loopback preflight, then `2 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`27 passed, 616
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `6ad6f756`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)
