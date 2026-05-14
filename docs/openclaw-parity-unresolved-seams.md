@@ -13634,6 +13634,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity
   moves to ~99.999999994%. Continue installed plugin activation depth,
   provider media edges, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: `openzues logs --plain` now handles broken
+  stdout pipes with an OpenClaw-shaped warning instead of failing the command.
+  Source/test checkpointed in `a4b1114c`; repo-wide parity remains estimated at
+  ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.999999995%. Continue installed plugin activation depth, provider media
+  edges, packaging/distribution, or companion breadth.
 - Current queue-head adjustment: direct provider-native outbound sends now
   lift `MEDIA:` directives out of visible message text and persist/deliver them
   as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;

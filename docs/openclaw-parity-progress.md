@@ -26203,6 +26203,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   check src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`,
   and focused `git diff --check`. Source/test checkpointed in `2e8f212c`.
 
+- The logs CLI now handles closed stdout pipes like OpenClaw's safe stream
+  writer: a broken stdout pipe stops tail emission and prints
+  `output stdout closed (EPIPE). Stopping tail.` to stderr instead of failing
+  the command. This closes `OZ-PKG-001DM`; repo-wide parity remains estimated
+  at ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.999999995%.
+- Verified logs broken-pipe handling with focused red/green
+  `python -m pytest tests\test_cli.py::test_logs_plain_warns_when_stdout_pipe_closes -q`
+  (`SystemExit(1)` before implementation, then `1 passed`), adjacent logs
+  proof `python -m pytest tests\test_cli.py -q -k
+  "logs_plain_warns_when_stdout_pipe_closes or
+  logs_plain_local_time_formats_structured_log_lines or
+  logs_plain_truncation_notice_includes_max_bytes_hint or
+  logs_follow_reuses_cursor_and_prints_file_header_once or
+  logs_plain_reset_notice_mentions_file_rotation"` (`5 passed, 654
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `a4b1114c`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)
