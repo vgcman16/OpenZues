@@ -7,6 +7,7 @@ from openzues.services.device_bootstrap_tokens import (
     get_device_bootstrap_token_profile,
     issue_device_bootstrap_token,
     revoke_device_bootstrap_token,
+    verify_device_bootstrap_token,
 )
 
 
@@ -106,3 +107,45 @@ def test_clear_device_bootstrap_tokens_removes_outstanding_tokens(tmp_path) -> N
     assert cleared == {"removed": 2}
     assert cleared_again == {"removed": 0}
     assert state == {}
+
+
+def test_verify_device_bootstrap_token_binds_first_device_identity(
+    tmp_path,
+) -> None:
+    issued = issue_device_bootstrap_token(base_dir=tmp_path)
+
+    verified = verify_device_bootstrap_token(
+        base_dir=tmp_path,
+        token=issued.token,
+        device_id=" device-123 ",
+        public_key=" public-key-123 ",
+        role="operator",
+        scopes=["operator.read"],
+    )
+    verified_again = verify_device_bootstrap_token(
+        base_dir=tmp_path,
+        token=issued.token,
+        device_id="device-123",
+        public_key="public-key-123",
+        role="operator",
+        scopes=["operator.read"],
+    )
+    rejected_other_device = verify_device_bootstrap_token(
+        base_dir=tmp_path,
+        token=issued.token,
+        device_id="device-456",
+        public_key="public-key-123",
+        role="operator",
+        scopes=["operator.read"],
+    )
+    state = json.loads((tmp_path / "devices" / "bootstrap.json").read_text())
+
+    assert verified == {"ok": True}
+    assert verified_again == {"ok": True}
+    assert rejected_other_device == {
+        "ok": False,
+        "reason": "bootstrap_token_invalid",
+    }
+    assert state[issued.token]["deviceId"] == "device-123"
+    assert state[issued.token]["publicKey"] == "public-key-123"
+    assert isinstance(state[issued.token]["lastUsedAtMs"], int)

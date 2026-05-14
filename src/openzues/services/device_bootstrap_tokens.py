@@ -11,6 +11,8 @@ from typing import Any
 
 from openzues.services.device_bootstrap_profile import (
     default_device_bootstrap_profile,
+    normalize_device_auth_role,
+    normalize_device_auth_scopes,
     normalize_device_bootstrap_handoff_profile,
     normalize_device_bootstrap_profile,
 )
@@ -99,6 +101,49 @@ def clear_device_bootstrap_tokens(*, base_dir: Path) -> dict[str, int]:
     return {"removed": removed}
 
 
+def verify_device_bootstrap_token(
+    *,
+    base_dir: Path,
+    token: str,
+    device_id: str,
+    public_key: str,
+    role: str,
+    scopes: Iterable[str],
+) -> dict[str, object]:
+    found = _find_bootstrap_record_entry(base_dir=base_dir, token=token)
+    if found is None:
+        return {"ok": False, "reason": "bootstrap_token_invalid"}
+    state, token_key, record = found
+    normalized_device_id = device_id.strip()
+    normalized_public_key = public_key.strip()
+    normalized_role = normalize_device_auth_role(role)
+    if not normalized_device_id or not normalized_public_key or not normalized_role:
+        return {"ok": False, "reason": "bootstrap_token_invalid"}
+    profile = _record_bootstrap_profile(record)
+    if not _bootstrap_profile_allows_request(
+        profile=profile,
+        role=normalized_role,
+        scopes=scopes,
+    ):
+        return {"ok": False, "reason": "bootstrap_token_invalid"}
+    bound_device_id = str(record.get("deviceId") or "").strip()
+    bound_public_key = str(record.get("publicKey") or "").strip()
+    if (bound_device_id or bound_public_key) and (
+        bound_device_id != normalized_device_id
+        or bound_public_key != normalized_public_key
+    ):
+        return {"ok": False, "reason": "bootstrap_token_invalid"}
+    state[token_key] = {
+        **record,
+        "profile": profile,
+        "deviceId": normalized_device_id,
+        "publicKey": normalized_public_key,
+        "lastUsedAtMs": int(time.time() * 1000),
+    }
+    _write_bootstrap_state(_bootstrap_token_path(base_dir), state)
+    return {"ok": True}
+
+
 def _issued_bootstrap_profile(
     *,
     profile: Mapping[str, Iterable[str]] | None,
@@ -113,6 +158,38 @@ def _issued_bootstrap_profile(
     if roles is not None or scopes is not None:
         return normalize_device_bootstrap_handoff_profile(roles, scopes)
     return default_device_bootstrap_profile()
+
+
+def _record_bootstrap_profile(record: Mapping[str, Any]) -> dict[str, list[str]]:
+    raw_profile = record.get("profile")
+    profile = raw_profile if isinstance(raw_profile, dict) else record
+    roles, scopes = normalize_device_bootstrap_profile(
+        profile.get("roles"),
+        profile.get("scopes"),
+    )
+    return {"roles": roles, "scopes": scopes}
+
+
+def _bootstrap_profile_allows_request(
+    *,
+    profile: Mapping[str, list[str]],
+    role: str,
+    scopes: Iterable[str],
+) -> bool:
+    roles = profile.get("roles") or []
+    if role not in roles:
+        return False
+    requested_scopes = normalize_device_auth_scopes(scopes)
+    if not requested_scopes:
+        return True
+    allowed_scopes = set(normalize_device_auth_scopes(profile.get("scopes") or []))
+    if role != "operator":
+        role_prefix = f"{role}."
+        return all(
+            scope.startswith(role_prefix) and scope in allowed_scopes
+            for scope in requested_scopes
+        )
+    return all(scope in allowed_scopes for scope in requested_scopes)
 
 
 def _find_bootstrap_record_entry(
