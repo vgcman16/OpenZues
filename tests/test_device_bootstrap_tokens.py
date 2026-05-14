@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from openzues.services.device_bootstrap_tokens import (
     clear_device_bootstrap_tokens,
@@ -152,6 +157,59 @@ def test_verify_device_bootstrap_token_binds_first_device_identity(
     assert state[issued.token]["deviceId"] == "device-123"
     assert state[issued.token]["publicKey"] == "public-key-123"
     assert isinstance(state[issued.token]["lastUsedAtMs"], int)
+
+
+def test_verify_device_bootstrap_token_accepts_equivalent_public_key_encodings(
+    tmp_path,
+) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    public_key = private_key.public_key()
+    public_key_pem = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
+    public_key_raw = public_key.public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    raw_public_key = base64.urlsafe_b64encode(public_key_raw).decode("ascii").rstrip("=")
+    device_id = hashlib.sha256(public_key_raw).hexdigest()
+    issued = issue_device_bootstrap_token(base_dir=tmp_path)
+
+    verified_with_pem = verify_device_bootstrap_token(
+        base_dir=tmp_path,
+        token=issued.token,
+        device_id=device_id,
+        public_key=public_key_pem,
+        role="operator",
+        scopes=["operator.read"],
+    )
+    verified_with_raw = verify_device_bootstrap_token(
+        base_dir=tmp_path,
+        token=issued.token,
+        device_id=device_id,
+        public_key=raw_public_key,
+        role="operator",
+        scopes=["operator.read"],
+    )
+    bound = get_bound_device_bootstrap_profile(
+        base_dir=tmp_path,
+        token=issued.token,
+        device_id=device_id,
+        public_key=raw_public_key,
+    )
+
+    assert verified_with_pem == {"ok": True}
+    assert verified_with_raw == {"ok": True}
+    assert bound == {
+        "roles": ["node", "operator"],
+        "scopes": [
+            "operator.approvals",
+            "operator.read",
+            "operator.talk.secrets",
+            "operator.write",
+        ],
+    }
 
 
 def test_get_bound_device_bootstrap_profile_requires_verified_identity(

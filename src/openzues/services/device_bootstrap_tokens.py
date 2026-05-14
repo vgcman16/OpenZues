@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hmac
 import json
 import secrets
@@ -8,6 +10,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from openzues.services.device_bootstrap_profile import (
     default_device_bootstrap_profile,
@@ -130,7 +135,7 @@ def verify_device_bootstrap_token(
         return {"ok": False, "reason": "bootstrap_token_invalid"}
     state, token_key, record = found
     normalized_device_id = device_id.strip()
-    normalized_public_key = public_key.strip()
+    normalized_public_key = _normalize_bootstrap_public_key(public_key)
     normalized_role = normalize_device_auth_role(role)
     if not normalized_device_id or not normalized_public_key or not normalized_role:
         return {"ok": False, "reason": "bootstrap_token_invalid"}
@@ -142,7 +147,7 @@ def verify_device_bootstrap_token(
     ):
         return {"ok": False, "reason": "bootstrap_token_invalid"}
     bound_device_id = str(record.get("deviceId") or "").strip()
-    bound_public_key = str(record.get("publicKey") or "").strip()
+    bound_public_key = _normalize_bootstrap_public_key(str(record.get("publicKey") or ""))
     if (bound_device_id or bound_public_key) and (
         bound_device_id != normalized_device_id
         or bound_public_key != normalized_public_key
@@ -171,12 +176,13 @@ def get_bound_device_bootstrap_profile(
         return None
     _, _, record = found
     normalized_device_id = device_id.strip()
-    normalized_public_key = public_key.strip()
+    normalized_public_key = _normalize_bootstrap_public_key(public_key)
     if not normalized_device_id or not normalized_public_key:
         return None
     if (
         str(record.get("deviceId") or "").strip() != normalized_device_id
-        or str(record.get("publicKey") or "").strip() != normalized_public_key
+        or _normalize_bootstrap_public_key(str(record.get("publicKey") or ""))
+        != normalized_public_key
     ):
         return None
     return _record_bootstrap_profile(record)
@@ -299,6 +305,45 @@ def _bootstrap_profile_allows_request(
             for scope in requested_scopes
         )
     return all(scope in allowed_scopes for scope in requested_scopes)
+
+
+def _normalize_bootstrap_public_key(public_key: str) -> str:
+    trimmed = public_key.strip()
+    if not trimmed:
+        return ""
+    if "BEGIN" in trimmed or any(marker in trimmed for marker in ("+", "/", "=")):
+        normalized = _normalize_device_public_key_base64url(trimmed)
+        return normalized if normalized is not None else trimmed
+    return trimmed
+
+
+def _normalize_device_public_key_base64url(public_key: str) -> str | None:
+    try:
+        if "BEGIN" in public_key:
+            key = serialization.load_pem_public_key(public_key.encode("utf-8"))
+            if isinstance(key, Ed25519PublicKey):
+                public_key_bytes = key.public_bytes(
+                    encoding=serialization.Encoding.Raw,
+                    format=serialization.PublicFormat.Raw,
+                )
+            else:
+                public_key_bytes = key.public_bytes(
+                    encoding=serialization.Encoding.DER,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo,
+                )
+        else:
+            public_key_bytes = _base64_url_decode(public_key)
+        if not public_key_bytes:
+            return None
+        return base64.urlsafe_b64encode(public_key_bytes).decode("ascii").rstrip("=")
+    except (TypeError, ValueError, UnicodeEncodeError, binascii.Error):
+        return None
+
+
+def _base64_url_decode(value: str) -> bytes:
+    normalized = value.replace("-", "+").replace("_", "/")
+    padded = normalized + "=" * ((4 - len(normalized) % 4) % 4)
+    return base64.b64decode(padded, validate=False)
 
 
 def _find_bootstrap_record_entry(
