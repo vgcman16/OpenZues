@@ -64,9 +64,10 @@ def get_device_bootstrap_token_profile(
     base_dir: Path,
     token: str,
 ) -> dict[str, list[str]] | None:
-    record = _find_bootstrap_record(base_dir=base_dir, token=token)
-    if record is None:
+    found = _find_bootstrap_record_entry(base_dir=base_dir, token=token)
+    if found is None:
         return None
+    _, _, record = found
     raw_profile = record.get("profile")
     profile = raw_profile if isinstance(raw_profile, dict) else record
     roles, scopes = normalize_device_bootstrap_profile(
@@ -74,6 +75,20 @@ def get_device_bootstrap_token_profile(
         profile.get("scopes"),
     )
     return {"roles": roles, "scopes": scopes}
+
+
+def revoke_device_bootstrap_token(
+    *,
+    base_dir: Path,
+    token: str,
+) -> dict[str, object]:
+    found = _find_bootstrap_record_entry(base_dir=base_dir, token=token)
+    if found is None:
+        return {"removed": False}
+    state, token_key, record = found
+    del state[token_key]
+    _write_bootstrap_state(_bootstrap_token_path(base_dir), state)
+    return {"removed": True, "record": record}
 
 
 def _issued_bootstrap_profile(
@@ -92,7 +107,11 @@ def _issued_bootstrap_profile(
     return default_device_bootstrap_profile()
 
 
-def _find_bootstrap_record(*, base_dir: Path, token: str) -> dict[str, Any] | None:
+def _find_bootstrap_record_entry(
+    *,
+    base_dir: Path,
+    token: str,
+) -> tuple[dict[str, dict[str, Any]], str, dict[str, Any]] | None:
     provided_token = token.strip()
     if not provided_token:
         return None
@@ -103,7 +122,7 @@ def _find_bootstrap_record(*, base_dir: Path, token: str) -> dict[str, Any] | No
     for token_key, record in state.items():
         persisted_token = str(record.get("token") or token_key)
         if hmac.compare_digest(provided_token, persisted_token):
-            return record
+            return state, token_key, record
     return None
 
 

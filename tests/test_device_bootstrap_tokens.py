@@ -5,6 +5,7 @@ import json
 from openzues.services.device_bootstrap_tokens import (
     get_device_bootstrap_token_profile,
     issue_device_bootstrap_token,
+    revoke_device_bootstrap_token,
 )
 
 
@@ -63,3 +64,30 @@ def test_get_device_bootstrap_token_profile_loads_valid_trimmed_token(
         "scopes": ["operator.read"],
     }
     assert missing is None
+
+
+def test_revoke_device_bootstrap_token_removes_specific_trimmed_token(
+    tmp_path,
+) -> None:
+    issued = issue_device_bootstrap_token(
+        base_dir=tmp_path,
+        profile={"roles": ["operator"], "scopes": ["operator.read"]},
+    )
+
+    revoked = revoke_device_bootstrap_token(base_dir=tmp_path, token=f" {issued.token} ")
+    missing = revoke_device_bootstrap_token(base_dir=tmp_path, token=issued.token)
+    state = json.loads((tmp_path / "devices" / "bootstrap.json").read_text())
+
+    assert revoked == {
+        "removed": True,
+        "record": {
+            "token": issued.token,
+            "ts": revoked["record"]["ts"],
+            "issuedAtMs": revoked["record"]["issuedAtMs"],
+            "expiresAtMs": revoked["record"]["expiresAtMs"],
+            "profile": {"roles": ["operator"], "scopes": ["operator.read"]},
+            "redeemedProfile": {"roles": [], "scopes": []},
+        },
+    }
+    assert missing == {"removed": False}
+    assert issued.token not in state
