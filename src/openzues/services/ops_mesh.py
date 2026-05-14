@@ -13151,7 +13151,6 @@ def _normalize_direct_channel_media_urls(
 _DIRECT_CHANNEL_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 _DIRECT_CHANNEL_FILE_EXT_RE = re.compile(r"\.\w{1,10}$")
 _DIRECT_CHANNEL_TRAVERSAL_SEGMENT_RE = re.compile(r"(?:^|[/\\])\.\.(?:[/\\]|$)")
-_DIRECT_CHANNEL_MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]\n]*\]\(([^)\n]+)\)")
 
 
 def _looks_like_direct_channel_media_source(value: str) -> bool:
@@ -13202,21 +13201,60 @@ def _direct_channel_markdown_image_target(raw_target: str) -> str | None:
     return target if _direct_channel_remote_media_url_allowed(target) else None
 
 
+def _direct_channel_markdown_image_spans(line: str) -> list[tuple[int, int, str]]:
+    spans: list[tuple[int, int, str]] = []
+    search_index = 0
+    while True:
+        image_start = line.find("![", search_index)
+        if image_start < 0:
+            break
+        target_prefix = line.find("](", image_start + 2)
+        if target_prefix < 0:
+            search_index = image_start + 2
+            continue
+        target_start = target_prefix + 2
+        depth = 0
+        index = target_start
+        while index < len(line):
+            character = line[index]
+            if character == "\\":
+                index += 2
+                continue
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                if depth == 0:
+                    spans.append((image_start, index + 1, line[target_start:index]))
+                    search_index = index + 1
+                    break
+                depth -= 1
+            index += 1
+        else:
+            search_index = image_start + 2
+    return spans
+
+
 def _split_direct_channel_markdown_image_media(line: str) -> tuple[str, list[str]]:
     if len(line) > 4096 or "![" not in line:
         return line, []
+    spans = _direct_channel_markdown_image_spans(line)
+    if not spans:
+        return line, []
     media_urls: list[str] = []
-
-    def replace(match: re.Match[str]) -> str:
-        target = _direct_channel_markdown_image_target(match.group(1))
+    cleaned_parts: list[str] = []
+    position = 0
+    for start, end, raw_target in spans:
+        target = _direct_channel_markdown_image_target(raw_target)
         if target is None:
-            return match.group(0)
+            continue
+        cleaned_parts.append(line[position:start])
+        cleaned_parts.append(" ")
         media_urls.append(target)
-        return " "
-
-    cleaned = _DIRECT_CHANNEL_MARKDOWN_IMAGE_RE.sub(replace, line)
+        position = end
     if not media_urls:
         return line, []
+    cleaned_parts.append(line[position:])
+    cleaned = "".join(cleaned_parts)
     return " ".join(cleaned.split()), media_urls
 
 
