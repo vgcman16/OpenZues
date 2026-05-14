@@ -26169,6 +26169,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py`, and focused `git diff --check`. Source/test
   checkpointed in `7e60f84a`.
 
+- Installed plugin runtime activation now mirrors OpenClaw's configured-channel
+  activation shape by adding auto-enabled channel owner plugin IDs to both
+  `plugins.allow` and `plugins.entries[id].enabled` before the activation
+  adapter runs. This closes `OZ-PLUGIN-00385`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.999999993%.
+- Verified channel plugin runtime activation entries with focused red/green
+  `python -m pytest tests\test_cli.py -q -k "plugins_doctor_json_activation_adapter_receives_resolved_auto_enabled_config"`
+  (`entries` absent before implementation, then `1 passed, 657 deselected`),
+  adjacent plugin runtime proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_doctor_json_activation_adapter_receives or
+  plugins_doctor_json_projects_runtime_text_transform_plugins or
+  package_manifest_runtime_metadata"` (`5 passed, 653 deselected`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`,
+  and focused `git diff --check`. Source/test checkpointed in `30870984`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

@@ -13619,6 +13619,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and runtime/CLI/doctor native-bridge parity moves to ~99.999999992%.
   Continue installed plugin activation depth, provider media edges,
   packaging/distribution, or companion breadth.
+- Current queue-head adjustment: installed plugin runtime activation now adds
+  auto-enabled channel owner plugin IDs to both `plugins.allow` and
+  `plugins.entries[id].enabled`, matching OpenClaw's configured-channel
+  activation context. Source/test checkpointed in `30870984`; repo-wide parity
+  remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity
+  moves to ~99.999999993%. Continue installed plugin activation depth,
+  provider media edges, packaging/distribution, or companion breadth.
 - Current queue-head adjustment: direct provider-native outbound sends now
   lift `MEDIA:` directives out of visible message text and persist/deliver them
   as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;
