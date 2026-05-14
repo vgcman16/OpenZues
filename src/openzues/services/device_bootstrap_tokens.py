@@ -4,6 +4,7 @@ import base64
 import binascii
 import hmac
 import json
+import logging
 import secrets
 import time
 from collections.abc import Iterable, Mapping
@@ -25,6 +26,7 @@ from openzues.services.device_bootstrap_profile import (
 
 DEVICE_BOOTSTRAP_TOKEN_TTL_SECONDS = 10 * 60
 _DEVICE_BOOTSTRAP_TOKEN_TTL_MS = DEVICE_BOOTSTRAP_TOKEN_TTL_SECONDS * 1000
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,13 +234,60 @@ def _issued_bootstrap_profile(
     scopes: Iterable[str] | None,
 ) -> tuple[list[str], list[str]]:
     if profile is not None:
-        return normalize_device_bootstrap_handoff_profile(
+        requested_roles, requested_scopes = normalize_device_bootstrap_profile(
             profile.get("roles"),
             profile.get("scopes"),
         )
+        retained_roles, retained_scopes = normalize_device_bootstrap_handoff_profile(
+            requested_roles,
+            requested_scopes,
+        )
+        _warn_if_issued_bootstrap_scopes_were_stripped(
+            requested_roles=requested_roles,
+            requested_scopes=requested_scopes,
+            retained_scopes=retained_scopes,
+        )
+        return retained_roles, retained_scopes
     if roles is not None or scopes is not None:
-        return normalize_device_bootstrap_handoff_profile(roles, scopes)
+        requested_roles, requested_scopes = normalize_device_bootstrap_profile(
+            roles,
+            scopes,
+        )
+        retained_roles, retained_scopes = normalize_device_bootstrap_handoff_profile(
+            requested_roles,
+            requested_scopes,
+        )
+        _warn_if_issued_bootstrap_scopes_were_stripped(
+            requested_roles=requested_roles,
+            requested_scopes=requested_scopes,
+            retained_scopes=retained_scopes,
+        )
+        return retained_roles, retained_scopes
     return default_device_bootstrap_profile()
+
+
+def _warn_if_issued_bootstrap_scopes_were_stripped(
+    *,
+    requested_roles: list[str],
+    requested_scopes: list[str],
+    retained_scopes: list[str],
+) -> None:
+    if not requested_scopes:
+        return
+    retained_scope_set = set(retained_scopes)
+    stripped_scopes = [
+        scope for scope in requested_scopes if scope not in retained_scope_set
+    ]
+    if not stripped_scopes:
+        return
+    logger.warning(
+        "bootstrap_token_scopes_stripped roles=%s requestedScopes=%s "
+        "retainedScopes=%s strippedScopes=%s",
+        requested_roles,
+        requested_scopes,
+        retained_scopes,
+        stripped_scopes,
+    )
 
 
 def _record_bootstrap_profile(record: Mapping[str, Any]) -> dict[str, list[str]]:

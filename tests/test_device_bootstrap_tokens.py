@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -50,6 +51,25 @@ def test_issue_device_bootstrap_token_bounds_explicit_profile_to_handoff_scopes(
             "operator.write",
         ],
     }
+
+
+def test_issue_device_bootstrap_token_logs_stripped_overbroad_scopes(
+    tmp_path,
+    caplog,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        issue_device_bootstrap_token(
+            base_dir=tmp_path,
+            profile={
+                "roles": ["node", "operator"],
+                "scopes": ["node.exec", "operator.admin", "operator.read"],
+            },
+        )
+
+    assert "bootstrap_token_scopes_stripped" in caplog.text
+    assert "node.exec" in caplog.text
+    assert "operator.admin" in caplog.text
+    assert "operator.read" in caplog.text
 
 
 def test_get_device_bootstrap_token_profile_loads_valid_trimmed_token(
