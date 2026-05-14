@@ -20,14 +20,14 @@ may lag behind this tracker.
 | Active gateway/session/tool-contract family | ~99.969% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.999999% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Matrix implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot structured self-closing media tags, QQBot reply message sequencing, QQBot local media file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot file-media text follow-up delivery, QQBot direct image/video media text follow-up delivery, QQBot inline media text ordering/result metadata, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.99999995% | High for bounded native bridge | ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, top-level logs CLI tail/local-time formatting/truncation hint, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
+| Provider-native inbound/outbound breadth | ~99.99999976% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Matrix implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot structured self-closing media tags, QQBot reply message sequencing, QQBot local media file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot file-media text follow-up delivery, QQBot direct image/video media text follow-up delivery, QQBot inline media text ordering/result metadata, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, safe direct outbound MEDIA/audio-as-voice/reply/reply-current stripping plus current-message resolution, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Runtime/CLI/doctor native bridge | ~99.99999997% | High for bounded native bridge | ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
-| Packaging/companion app breadth | ~11.3% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, Zalo/plugin-SDK profile-aware pairing approval commands, pending device-pair queue timestamp stability, changed approval-snapshot supersession, interactive supersession visibility, bootstrap profile bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope warnings, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR SecretRef-template inference, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, and QR local token SecretRef resolution are landed; companion apps remain mostly open |
+| Packaging/companion app breadth | ~11.4% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, Zalo/plugin-SDK profile-aware pairing approval commands, pending device-pair queue timestamp stability, changed approval-snapshot supersession, interactive supersession visibility, bootstrap profile bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope warnings, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR SecretRef-template inference, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, QR local token SecretRef resolution, and Windows companion-node command defaults are landed; companion apps remain mostly open |
 
-Latest verified adjustment: `OZ-PKG-001DG` logs CLI truncation hint moves
-runtime/CLI/doctor native-bridge parity to ~99.99999995%; repo-wide OpenClaw
-parity remains estimated at ~99.9%.
+Latest verified adjustment: `OZ-PROV-001HJ` Telegram markdown-image balanced URL
+extraction moves provider-native inbound/outbound breadth to ~99.99999976%;
+repo-wide OpenClaw parity remains estimated at ~99.9%.
 
 ## Implemented / Locked Bounded Areas
 
@@ -3661,6 +3661,60 @@ parity remains estimated at ~99.9%.
     (`1 failed` before implementation because the hint was missing, then `1
     passed`), adjacent logs proof (`4 passed, 650 deselected`), ruff, mypy,
     and focused `git diff --check`.
+
+- [x] `OZ-PKG-001DH` Logs CLI follow polling.
+  - Source: `openclaw-main/src/cli/logs-cli.ts`,
+    `openclaw-main/src/cli/logs-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues logs --follow --interval <ms>` repeatedly polls the
+    gateway log tail using cursor resume semantics, prints the file header only
+    once, and exits cleanly on keyboard interruption.
+  - Evidence required: focused follow logs proof, adjacent logs CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `f153e85d`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_logs_follow_reuses_cursor_and_prints_file_header_once -q`
+    (`1 failed` before implementation because `--follow`/`--interval` were
+    unsupported, then `1 passed`), adjacent logs proof (`5 passed, 650
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-PKG-001DI` Logs CLI reset notice wording.
+  - Source: `openclaw-main/src/cli/logs-cli.ts`,
+    `openclaw-main/src/cli/logs-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues logs --plain --cursor <past-eof>` emits the
+    OpenClaw-shaped reset notice `Log cursor reset (file rotated).`.
+  - Evidence required: focused reset-notice logs proof, adjacent logs CLI
+    proof, ruff, mypy
+  - Status: checkpointed in `79050f2d`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_logs_plain_reset_notice_mentions_file_rotation -q`
+    (`1 failed` before implementation because the file-rotation text was
+    missing, then `1 passed`), adjacent logs proof (`6 passed, 650
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-PKG-001DJ` Windows companion-node command defaults.
+  - Source: `openclaw-main/src/gateway/node-command-policy.ts`,
+    `openclaw-main/src/gateway/node-command-policy.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_command_policy.py`,
+    `tests/test_gateway_node_command_policy.py`
+  - Contract: Windows companion nodes receive OpenClaw's default canvas,
+    camera, location, device, system, and `screen.snapshot` command families
+    while `screen.record` remains denied unless explicitly configured.
+  - Evidence required: focused Windows allowlist proof, adjacent command policy
+    proof, ruff, mypy
+  - Status: checkpointed in `9ca32c06`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_command_policy.py::test_windows_allowlist_matches_openclaw_companion_defaults -q`
+    (`1 failed` before implementation because Windows was system-only, then `1
+    passed`), adjacent policy proof (`3 passed`), ruff, mypy, and focused `git
+    diff --check`.
 
 - [ ] Runtime-control hard gaps.
   - Source: broader OpenClaw runtime/client integration and session runtime
@@ -7870,6 +7924,225 @@ parity remains estimated at ~99.9%.
     (`3 passed, 505 deselected`), `ruff check
     src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
     src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001GZ` Direct outbound `MEDIA:` directive lifting.
+  - Source: `openclaw-main/src/infra/outbound/payloads.test.ts`,
+    `openclaw-main/src/auto-reply/reply/reply-directives.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: direct provider-native outbound sends strip `MEDIA:` lines from
+    visible message text, merge those values into `mediaUrl` / `mediaUrls`,
+    persist the sanitized payload, and deliver native adapter requests with
+    caption text plus media URLs.
+  - Evidence required: focused media-directive send proof, adjacent
+    provider/native send proof, ruff, mypy
+  - Status: checkpointed in `2da7e35d`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_media_directive_for_native_adapter -q`
+    (`1 failed` before implementation because the `MEDIA:` line leaked as
+    text, then `1 passed`), adjacent provider/native proof (`5 passed, 507
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001HA` Direct outbound `audio_as_voice` directive lifting.
+  - Source: `openclaw-main/src/media/audio-tags.ts`,
+    `openclaw-main/src/media/parse.ts`,
+    `openclaw-main/src/infra/outbound/payloads.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: direct provider-native outbound sends strip
+    `[[audio_as_voice]]` from visible caption text and project it into
+    persisted `audioAsVoice` plus runtime `audio_as_voice` metadata unless an
+    explicit flag was already supplied.
+  - Evidence required: focused audio directive proof, adjacent provider/native
+    send proof, ruff, mypy
+  - Status: checkpointed in `b8af69d1`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_audio_as_voice_directive -q`
+    (`1 failed` before implementation because the tag leaked as caption text,
+    then `1 passed`), adjacent provider/native proof (`9 passed, 504
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001HB` Direct outbound `reply_to` directive lifting.
+  - Source: `openclaw-main/src/utils/directive-tags.ts`,
+    `openclaw-main/src/infra/outbound/message-action-runner.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: direct provider-native outbound sends strip
+    `[[reply_to:<id>]]` from visible text and project the id into persisted
+    `replyToId` / `replyToIdSource` plus runtime `reply_to_id` metadata unless
+    an explicit reply target was already supplied.
+  - Evidence required: focused reply directive proof, adjacent provider/native
+    send proof, ruff, mypy
+  - Status: checkpointed in `ae23842d`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_reply_directive_for_native_adapter -q`
+    (`1 failed` before implementation because the tag leaked as visible text,
+    then `1 passed`), adjacent provider/native proof (`10 passed, 504
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001HC` Direct outbound `reply_to_current` directive stripping.
+  - Source: `openclaw-main/src/utils/directive-tags.ts`,
+    `openclaw-main/src/auto-reply/reply/reply-directives.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: direct provider-native outbound sends strip
+    `[[reply_to_current]]` from visible text even when no current-message
+    context exists, avoiding visible directive leakage while preserving no
+    fabricated reply id.
+  - Evidence required: focused reply-current directive proof, adjacent
+    provider/native send proof, ruff, mypy
+  - Status: checkpointed in `15bd16d1`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_strips_reply_to_current_directive -q`
+    (`1 failed` before implementation because the tag leaked as visible text,
+    then `1 passed`), explicit-reply guard proof (`1 passed`), adjacent
+    provider/native proof (`11 passed, 504 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] `OZ-PROV-001HD` Direct outbound `reply_to_current` context resolution.
+  - Source: `openclaw-main/src/auto-reply/reply/reply-directives.ts`,
+    `openclaw-main/src/auto-reply/reply/reply-plumbing.test.ts`,
+    `openclaw-main/src/infra/outbound/message-action-threading.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_ops_mesh.py`, `tests/test_gateway_node_methods.py`
+  - Contract: direct provider-native outbound sends and gateway `send` resolve
+    `[[reply_to_current]]` to supplied current-message context, strip the tag
+    from visible text, and project the resolved id into persisted/runtime reply
+    metadata without overriding explicit reply targets.
+  - Evidence required: focused OpsMesh current-message proof, focused gateway
+    send proof, adjacent provider/native send proof, adjacent gateway send
+    proof, ruff, mypy
+  - Status: checkpointed in `de881dae`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green OpsMesh and gateway proofs
+    (`1 failed` each before implementation, then `1 passed` each), adjacent
+    provider/native proof (`12 passed, 504 deselected`), adjacent gateway proof
+    (`3 passed, 1301 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001HE` Direct outbound unsafe HTTP media directive rejection.
+  - Source: `openclaw-main/src/media/parse.ts`,
+    `openclaw-main/src/media/parse.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: direct provider-native outbound sends do not lift `MEDIA:http://`
+    sources into media payloads; unsafe remote tokens remain visible text while
+    HTTPS media directives continue to lift.
+  - Evidence required: focused HTTP media rejection proof, HTTPS media guard
+    proof, adjacent provider/native send proof, ruff, mypy
+  - Status: checkpointed in `400c08c4`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_keeps_unsafe_http_media_directive_as_text -q`
+    (`1 failed` before implementation because the `http://` source was lifted
+    as media, then `1 passed`), HTTPS media guard proof (`1 passed`), adjacent
+    provider/native proof (`13 passed, 504 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] `OZ-PROV-001HF` Direct outbound blocked remote media host rejection.
+  - Source: `openclaw-main/src/media/parse.ts`,
+    `openclaw-main/src/media/parse.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: direct provider-native outbound sends do not lift HTTPS
+    `MEDIA:` sources for localhost, bare intranet names, local/internal
+    suffixes, malformed empty-label hosts, or special-use IP addresses.
+  - Evidence required: focused localhost media rejection proof, HTTP/HTTPS
+    media guard proofs, adjacent provider/native send proof, ruff, mypy
+  - Status: checkpointed in `35bfa90d`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_keeps_localhost_media_directive_as_text -q`
+    (`1 failed` before implementation because `https://localhost/...` was
+    lifted as media, then `1 passed`), HTTP rejection guard proof (`1 passed`),
+    HTTPS media guard proof (`1 passed`), adjacent provider/native proof (`14
+    passed, 504 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001HG` Direct outbound bare filename media lifting.
+  - Source: `openclaw-main/src/media/parse.ts`,
+    `openclaw-main/src/media/parse.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: direct provider-native outbound sends lift OpenClaw-supported
+    bare filenames with file extensions, such as `MEDIA:image.png`, into
+    provider media metadata and remove the directive from visible text.
+  - Evidence required: focused bare filename media lifting proof, HTTP/HTTPS
+    and localhost media guard proofs, adjacent provider/native send proof,
+    ruff, mypy
+  - Status: checkpointed in `b4d8ebc3`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_bare_filename_media_directive -q`
+    (`1 failed` before implementation because `MEDIA:image.png` remained
+    visible, then `1 passed`), HTTPS media lifting guard proof (`1 passed`),
+    unsafe HTTP media rejection guard proof (`1 passed`), localhost media
+    rejection guard proof (`1 passed`), adjacent provider/native proof (`15
+    passed, 504 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001HH` Direct outbound traversal/home-dir media rejection.
+  - Source: `openclaw-main/src/media/parse.ts`,
+    `openclaw-main/src/media/parse.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: direct provider-native outbound sends strip traversal and
+    home-dir local `MEDIA:` directives from visible text without delivering
+    them as media attachments.
+  - Evidence required: focused traversal/home-dir media rejection proof,
+    bare filename/HTTP/HTTPS/localhost media guard proofs, adjacent
+    provider/native send proof, ruff, mypy
+  - Status: checkpointed in `ebd4fb9b`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_strips_traversal_media_directive_without_lifting -q`
+    (`2 failed` before implementation because traversal/home paths were lifted
+    as media, then `2 passed`), bare filename, HTTPS, HTTP, and localhost media
+    guard proofs (`1 passed` each), adjacent provider/native proof (`17 passed,
+    504 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001HI` Telegram outbound markdown-image media lifting.
+  - Source: `openclaw-main/extensions/telegram/src/outbound-adapter.ts`,
+    `openclaw-main/src/media/parse.ts`,
+    `openclaw-main/src/infra/outbound/payloads.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Telegram direct outbound sends honor the upstream
+    `extractMarkdownImages` posture by lifting safe HTTPS markdown image links
+    into provider media metadata while preserving surrounding caption text.
+  - Evidence required: focused Telegram markdown-image lifting proof, media
+    directive guard proofs, adjacent provider/native send proof, ruff, mypy
+  - Status: checkpointed in `77968bed`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_telegram_markdown_image -q`
+    (`1 failed` before implementation because the markdown image stayed in
+    visible text, then `1 passed`), media directive guard proofs, adjacent
+    provider/native proof (`18 passed, 504 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] `OZ-PROV-001HJ` Telegram markdown-image balanced URL extraction.
+  - Source: `openclaw-main/src/media/parse.ts`,
+    `openclaw-main/src/media/parse.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Telegram markdown-image extraction preserves balanced
+    parentheses inside safe HTTPS image URLs and removes the whole markdown
+    image from visible caption text.
+  - Evidence required: focused balanced-parenthesis markdown-image proof,
+    simple markdown-image and media directive guard proofs, adjacent
+    provider/native send proof, ruff, mypy
+  - Status: checkpointed in `75bf8a39`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_telegram_markdown_image_with_parentheses -q`
+    (`1 failed` before implementation because the URL was truncated and `.png)`
+    remained visible, then `1 passed`), simple markdown-image proof, media
+    directive guard proofs, adjacent provider/native proof (`19 passed, 504
+    deselected`), ruff, mypy, and focused `git diff --check`.
 
 - [x] Zalo user `channels.logout` runtime profile cleanup.
   - Source: `openclaw-main/src/gateway/server-methods/channels.ts`,

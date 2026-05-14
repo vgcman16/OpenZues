@@ -15,7 +15,7 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999995% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999997% after the
   runtime bridge doctor posture, native ACP client interactive replay, ACP
   persisted task-record child-cap counting, ACP `streamTo="parent"`
   requester-context preflight, ACP `resumeSessionId` requester-context
@@ -31,7 +31,7 @@ Current percentage rollup:
   post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
   MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
-  preflight, devices list/approve CLI, top-level logs CLI tail/local-time formatting/truncation hint,
+  preflight, devices list/approve CLI, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice,
   package-update downgrade confirmation,
   stored-channel package update dispatch, package-update Node engine preflight,
   package-update activated plugin/channel-probe/version-mismatch restart-health failure,
@@ -160,7 +160,7 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.999999%
+- The provider-native inbound/outbound breadth family is estimated at ~99.99999976%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Matrix implicit reply
   fanout, IRC media attachment formatting, Discord multi-media implicit reply
@@ -172,7 +172,9 @@ Current percentage rollup:
   file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file
   fallback, QQBot file-media text follow-up delivery, QQBot direct image/video
   media text follow-up delivery, QQBot inline media text ordering/result
-  metadata, LINE signed webhook
+  metadata, safe direct outbound `MEDIA:` / `[[audio_as_voice]]` /
+  `[[reply_to:...]]` / `[[reply_to_current]]` directive lifting,
+  LINE signed webhook
   ingress, and
   LINE text webhook session delivery plus
   postback/media-placeholder/sticker/location delivery and group
@@ -188,7 +190,7 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~11.3% after QR
+- The packaging/companion app breadth family is estimated at ~11.4% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
   gateway dispatch, remote device mutation dispatch, configured remote URL
@@ -204,8 +206,9 @@ Current percentage rollup:
   gates, device-token cross-device mutation guards, operator-admin scope
   compatibility for device-token rotation, pairing approval seeded device-auth
   tokens, rotated token raw-value redaction for unbound callers, local QR
-  password SecretRef resolution, cross-device pairing removal guards, and
-  remove/clear/reject/rotate/revoke coverage.
+  password SecretRef resolution, cross-device pairing removal guards, Windows
+  companion-node default command parity, and remove/clear/reject/rotate/revoke
+  coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -1554,9 +1557,19 @@ Direct audio-as-voice media sends now also preserve OpenClaw's
 `GatewayOutboundRuntimeMessageRequest`, route-backed provider event payloads,
 provider-backed runtime delivery, and saved failed-send replay formatting.
 Gateway `send` message bodies now also run the bounded OpenClaw outbound
-payload directive normalization for `[[reply_to:...]]`, `[[reply_to_current]]`,
-`[[audio_as_voice]]`, and line-start `MEDIA:` entries before channel delivery,
-so directive markers do not leak as visible outbound text.
+payload directive normalization for `[[reply_to:...]]`,
+`[[reply_to_current]]`, `[[audio_as_voice]]`, and line-start `MEDIA:` entries
+before channel delivery, projecting explicit reply tags into `replyToId`
+metadata and resolving `[[reply_to_current]]` against supplied current-message
+context while keeping directive markers out of visible outbound text. Remaining
+reply-directive parity is broader streaming/plumbing fanout outside the bounded
+direct send path. Direct media directive parsing now also rejects unsafe
+`http://` remote media sources plus blocked HTTPS hosts/IPs, accepts
+OpenClaw-supported bare filenames with extensions, and strips traversal/home-dir
+local path directives without delivery. Telegram direct sends now lift simple
+safe HTTPS markdown images when the upstream channel adapter opts in; remaining
+media safety parity is markdown-image title/multiple and invalid-target edge
+cases plus any deeper provider-specific media edge cases.
 Telegram native poll route sends now also forward OpenClaw's multi-select
 intent to Bot API payloads with `allows_multiple_answers`, preserving explicit
 multi-select and default single-choice behavior alongside anonymous, duration,
@@ -13458,3 +13471,38 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and runtime/CLI/doctor native-bridge parity moves to ~99.99999995%. Continue
   remaining packaging/distribution breadth, ACP lifecycle depth, installed
   plugin activation, provider media edges, or companion app flows.
+- Current queue-head adjustment: native `openzues logs --follow --interval`
+  now polls the gateway log tail with cursor resume semantics and prints the
+  file header only once. Source/test checkpointed in `f153e85d`; repo-wide
+  parity remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge
+  parity moves to ~99.99999996%. Continue
+  remaining packaging/distribution breadth, ACP lifecycle depth, installed
+  plugin activation, provider media edges, or companion app flows.
+- Current queue-head adjustment: native `openzues logs --plain --cursor`
+  reset notices now mention file rotation, matching OpenClaw's text-mode logs
+  output. Source/test checkpointed in `79050f2d`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.99999997%. Continue
+  remaining packaging/distribution breadth, ACP lifecycle depth, installed
+  plugin activation, provider media edges, or companion app flows.
+- Current queue-head adjustment: Windows companion-node command defaults now
+  include OpenClaw's canvas, camera, location, device, system, and
+  `screen.snapshot` command families while still excluding `screen.record` by
+  default. Source/test checkpointed in `9ca32c06`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~11.4%.
+  Continue companion-app device flows, packaging/distribution, ACP lifecycle,
+  provider media edges, or setup/onboarding gaps.
+- Current queue-head adjustment: direct provider-native outbound sends now
+  lift `MEDIA:` directives out of visible message text and persist/deliver them
+  as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.9999993%. Continue provider media/reply
+  edges, packaging/distribution, installed plugin activation, or companion
+  breadth.
+- Current queue-head adjustment: direct provider-native outbound sends now
+  strip `[[audio_as_voice]]` from visible caption text and project it into
+  `audioAsVoice` / runtime `audio_as_voice` metadata. Source/test checkpointed
+  in `b8af69d1`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.9999994%. Continue
+  provider media/reply edges, packaging/distribution, installed plugin
+  activation, or companion breadth.

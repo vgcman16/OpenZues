@@ -11301,7 +11301,7 @@ async def test_ops_mesh_service_send_direct_channel_message_preserves_audio_as_v
     assert provider_requests[0] == GatewayOutboundRuntimeMessageRequest(
         channel="telegram",
         target="chat:ops",
-        message="voice caption\n\nMedia:\n1. file:///tmp/clip.mp3\n\nSettings: audioAsVoice=true",
+        message="voice caption",
         media_urls=("file:///tmp/clip.mp3",),
         audio_as_voice=True,
         session_key=expected_session_key,
@@ -11435,6 +11435,561 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_native_adapter_
         "channelId": "slack:C123",
         "mediaIds": ["file-1"],
     }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_lifts_media_directive_for_native_adapter(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-media-directive"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    native_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_native_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        native_requests.append(request)
+        return {"messageId": "native-media-directive-1"}
+
+    runtime = GatewayOutboundRuntimeService()
+    runtime.bind_native_message_deliverer(
+        channel="slack",
+        account_id="workspace-bot",
+        deliverer=fake_native_delivery,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=runtime,
+    )
+
+    await service.send_direct_channel_message(
+        channel="slack",
+        to="channel:C123",
+        message="Ship it\nMEDIA:https://example.com/chart.png",
+        account_id="workspace-bot",
+        idempotency_key="idem-media-directive-send",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(native_requests) == 1
+    assert native_requests[0].message == "Ship it"
+    assert native_requests[0].media_urls == ("https://example.com/chart.png",)
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == "Ship it"
+    assert delivery["event_payload"]["mediaUrl"] == "https://example.com/chart.png"
+    assert delivery["event_payload"]["mediaUrls"] == ["https://example.com/chart.png"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_lifts_bare_filename_media_directive(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-bare-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-bare-media-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message="Caption\nMEDIA:image.png",
+        idempotency_key="idem-bare-media-directive-send",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(provider_requests) == 1
+    assert provider_requests[0].message == "Caption"
+    assert provider_requests[0].media_urls == ("image.png",)
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == "Caption"
+    assert delivery["event_payload"]["mediaUrl"] == "image.png"
+    assert delivery["event_payload"]["mediaUrls"] == ["image.png"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_lifts_telegram_markdown_image(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-md-image"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-md-image-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message="Chart ![chart](https://example.com/chart.png) now",
+        idempotency_key="idem-telegram-md-image-directive-send",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(provider_requests) == 1
+    assert provider_requests[0].message == "Chart now"
+    assert provider_requests[0].media_urls == ("https://example.com/chart.png",)
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == "Chart now"
+    assert delivery["event_payload"]["mediaUrl"] == "https://example.com/chart.png"
+    assert delivery["event_payload"]["mediaUrls"] == ["https://example.com/chart.png"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_lifts_telegram_markdown_image_with_parentheses(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-md-parens"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-md-parens-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message="Chart ![img](https://example.com/a_(1).png) now",
+        idempotency_key="idem-telegram-md-parens-directive-send",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(provider_requests) == 1
+    assert provider_requests[0].message == "Chart now"
+    assert provider_requests[0].media_urls == ("https://example.com/a_(1).png",)
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == "Chart now"
+    assert delivery["event_payload"]["mediaUrl"] == "https://example.com/a_(1).png"
+    assert delivery["event_payload"]["mediaUrls"] == ["https://example.com/a_(1).png"]
+
+
+@pytest.mark.parametrize(
+    ("media_directive", "idempotency_key"),
+    [
+        ("MEDIA:../../../etc/passwd", "idem-traversal-media-directive-send"),
+        ("MEDIA:~/.ssh/id_rsa", "idem-home-media-directive-send"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_strips_traversal_media_directive_without_lifting(
+    media_directive: str,
+    idempotency_key: str,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / (
+        "ops-mesh-direct-send-traversal-media"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-traversal-media-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message=f"Caption\n{media_directive}",
+        idempotency_key=idempotency_key,
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(provider_requests) == 1
+    assert provider_requests[0].message == "Caption"
+    assert provider_requests[0].media_urls == ()
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == "Caption"
+    assert "mediaUrl" not in delivery["event_payload"]
+    assert "mediaUrls" not in delivery["event_payload"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_lifts_audio_as_voice_directive(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-audio-directive"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-audio-directive-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message="Voice note [[audio_as_voice]]\nMEDIA:file:///tmp/clip.mp3",
+        idempotency_key="idem-audio-directive-send",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(provider_requests) == 1
+    assert provider_requests[0].message == "Voice note"
+    assert provider_requests[0].media_urls == ("file:///tmp/clip.mp3",)
+    assert provider_requests[0].audio_as_voice is True
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == "Voice note"
+    assert delivery["event_payload"]["audioAsVoice"] is True
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_lifts_reply_directive_for_native_adapter(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-reply-directive"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    native_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_native_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        native_requests.append(request)
+        return {"messageId": "native-reply-directive-1"}
+
+    runtime = GatewayOutboundRuntimeService()
+    runtime.bind_native_message_deliverer(
+        channel="slack",
+        account_id="workspace-bot",
+        deliverer=fake_native_delivery,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=runtime,
+    )
+
+    await service.send_direct_channel_message(
+        channel="slack",
+        to="channel:C123",
+        message="[[reply_to: message-99]] Reply body",
+        account_id="workspace-bot",
+        idempotency_key="idem-reply-directive-send",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(native_requests) == 1
+    assert native_requests[0].message == "Reply body"
+    assert native_requests[0].reply_to_id == "message-99"
+    assert native_requests[0].reply_to_id_source == "explicit"
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == "Reply body"
+    assert delivery["event_payload"]["replyToId"] == "message-99"
+    assert delivery["event_payload"]["replyToIdSource"] == "explicit"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_strips_reply_to_current_directive(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-reply-current"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-reply-current-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message="[[reply_to_current]] Reply body",
+        idempotency_key="idem-reply-current-directive-send",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(provider_requests) == 1
+    assert provider_requests[0].message == "Reply body"
+    assert provider_requests[0].reply_to_id is None
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == "Reply body"
+    assert "replyToId" not in delivery["event_payload"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_resolves_reply_to_current_directive(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-reply-current-id"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-reply-current-id-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message="[[reply_to_current]] Reply body",
+        current_message_id="message-current-42",
+        idempotency_key="idem-reply-current-id-directive-send",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(provider_requests) == 1
+    assert provider_requests[0].message == "Reply body"
+    assert provider_requests[0].reply_to_id == "message-current-42"
+    assert provider_requests[0].reply_to_id_source == "explicit"
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == "Reply body"
+    assert delivery["event_payload"]["replyToId"] == "message-current-42"
+    assert delivery["event_payload"]["replyToIdSource"] == "explicit"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_keeps_unsafe_http_media_directive_as_text(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-http-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-http-media-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message="Caption\nMEDIA:http://example.com/image.png",
+        idempotency_key="idem-http-media-directive-send",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(provider_requests) == 1
+    assert provider_requests[0].message == "Caption\nMEDIA:http://example.com/image.png"
+    assert provider_requests[0].media_urls == ()
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == (
+        "Caption\nMEDIA:http://example.com/image.png"
+    )
+    assert "mediaUrl" not in delivery["event_payload"]
+    assert "mediaUrls" not in delivery["event_payload"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_keeps_localhost_media_directive_as_text(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-localhost-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-localhost-media-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message="Caption\nMEDIA:https://localhost/image.png",
+        idempotency_key="idem-localhost-media-directive-send",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(provider_requests) == 1
+    assert provider_requests[0].message == "Caption\nMEDIA:https://localhost/image.png"
+    assert provider_requests[0].media_urls == ()
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == (
+        "Caption\nMEDIA:https://localhost/image.png"
+    )
+    assert "mediaUrl" not in delivery["event_payload"]
+    assert "mediaUrls" not in delivery["event_payload"]
 
 
 @pytest.mark.asyncio

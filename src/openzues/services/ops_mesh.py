@@ -13148,6 +13148,262 @@ def _normalize_direct_channel_media_urls(
     return normalized
 
 
+_DIRECT_CHANNEL_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
+_DIRECT_CHANNEL_FILE_EXT_RE = re.compile(r"\.\w{1,10}$")
+_DIRECT_CHANNEL_TRAVERSAL_SEGMENT_RE = re.compile(r"(?:^|[/\\])\.\.(?:[/\\]|$)")
+
+
+def _looks_like_direct_channel_media_source(value: str) -> bool:
+    candidate = value.strip()
+    if not candidate:
+        return False
+    if re.match(r"(?i)^https?://", candidate):
+        return _direct_channel_remote_media_url_allowed(candidate)
+    if _direct_channel_media_source_has_traversal_or_home_prefix(candidate):
+        return False
+    if re.match(r"(?i)^(file://|/|[a-z]:[\\/]|\\\\|\.{1,2}/|~)", candidate):
+        return True
+    if _direct_channel_bare_media_filename_allowed(candidate):
+        return True
+    return ("/" in candidate or "\\" in candidate) and "." in candidate
+
+
+def _direct_channel_media_source_has_traversal_or_home_prefix(candidate: str) -> bool:
+    return (
+        candidate.startswith("../")
+        or candidate == ".."
+        or candidate.startswith("~")
+        or _DIRECT_CHANNEL_TRAVERSAL_SEGMENT_RE.search(candidate) is not None
+    )
+
+
+def _direct_channel_media_source_is_rejected_local_path(candidate: str) -> bool:
+    return not _DIRECT_CHANNEL_SCHEME_RE.match(
+        candidate
+    ) and _direct_channel_media_source_has_traversal_or_home_prefix(candidate)
+
+
+def _direct_channel_extract_markdown_images_enabled(channel: str) -> bool:
+    return str(channel or "").strip().lower() == "telegram"
+
+
+def _direct_channel_markdown_image_target(raw_target: str) -> str | None:
+    target = raw_target.strip()
+    if not target:
+        return None
+    if any(character.isspace() for character in target):
+        target = target.split()[0]
+    target = target.strip("`\"'<>")
+    if not re.match(r"(?i)^https://", target):
+        return None
+    if len(target) > 4096:
+        return None
+    return target if _direct_channel_remote_media_url_allowed(target) else None
+
+
+def _direct_channel_markdown_image_spans(line: str) -> list[tuple[int, int, str]]:
+    spans: list[tuple[int, int, str]] = []
+    search_index = 0
+    while True:
+        image_start = line.find("![", search_index)
+        if image_start < 0:
+            break
+        target_prefix = line.find("](", image_start + 2)
+        if target_prefix < 0:
+            search_index = image_start + 2
+            continue
+        target_start = target_prefix + 2
+        depth = 0
+        index = target_start
+        while index < len(line):
+            character = line[index]
+            if character == "\\":
+                index += 2
+                continue
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                if depth == 0:
+                    spans.append((image_start, index + 1, line[target_start:index]))
+                    search_index = index + 1
+                    break
+                depth -= 1
+            index += 1
+        else:
+            search_index = image_start + 2
+    return spans
+
+
+def _split_direct_channel_markdown_image_media(line: str) -> tuple[str, list[str]]:
+    if len(line) > 4096 or "![" not in line:
+        return line, []
+    spans = _direct_channel_markdown_image_spans(line)
+    if not spans:
+        return line, []
+    media_urls: list[str] = []
+    cleaned_parts: list[str] = []
+    position = 0
+    for start, end, raw_target in spans:
+        target = _direct_channel_markdown_image_target(raw_target)
+        if target is None:
+            continue
+        cleaned_parts.append(line[position:start])
+        cleaned_parts.append(" ")
+        media_urls.append(target)
+        position = end
+    if not media_urls:
+        return line, []
+    cleaned_parts.append(line[position:])
+    cleaned = "".join(cleaned_parts)
+    return " ".join(cleaned.split()), media_urls
+
+
+def _direct_channel_bare_media_filename_allowed(candidate: str) -> bool:
+    return (
+        _DIRECT_CHANNEL_SCHEME_RE.match(candidate) is None
+        and "/" not in candidate
+        and "\\" not in candidate
+        and not any(character.isspace() for character in candidate)
+        and _DIRECT_CHANNEL_FILE_EXT_RE.search(candidate) is not None
+    )
+
+
+def _direct_channel_remote_media_url_allowed(value: str) -> bool:
+    parsed = urlparse(value)
+    if parsed.scheme.lower() != "https":
+        return False
+    if parsed.username or parsed.password:
+        return False
+    hostname = parsed.hostname
+    if hostname is None:
+        return False
+    return not _direct_channel_remote_media_host_blocked(hostname)
+
+
+def _direct_channel_remote_media_host_blocked(hostname: str) -> bool:
+    normalized = hostname.strip().lower().strip("[]").rstrip(".")
+    if not normalized:
+        return True
+    if any(label == "" for label in normalized.split(".")):
+        return True
+    if (
+        normalized == "localhost"
+        or normalized == "localhost.localdomain"
+        or normalized == "metadata.google.internal"
+        or normalized.endswith(".localhost")
+        or normalized.endswith(".local")
+        or normalized.endswith(".internal")
+    ):
+        return True
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return "." not in normalized
+    return (
+        address.is_loopback
+        or address.is_link_local
+        or address.is_private
+        or address.is_reserved
+        or address.is_multicast
+        or address.is_unspecified
+    )
+
+
+_DIRECT_CHANNEL_AUDIO_AS_VOICE_RE = re.compile(
+    r"\[\[\s*audio_as_voice\s*\]\]",
+    re.IGNORECASE,
+)
+_DIRECT_CHANNEL_REPLY_TO_RE = re.compile(
+    r"\[\[\s*reply_to\s*:\s*([^\]\n]+)\s*\]\]",
+    re.IGNORECASE,
+)
+_DIRECT_CHANNEL_REPLY_TO_CURRENT_RE = re.compile(
+    r"\[\[\s*reply_to_current\s*\]\]",
+    re.IGNORECASE,
+)
+
+
+def _strip_direct_channel_audio_directive(message: str) -> tuple[str, bool]:
+    if _DIRECT_CHANNEL_AUDIO_AS_VOICE_RE.search(message) is None:
+        return message, False
+    cleaned = _DIRECT_CHANNEL_AUDIO_AS_VOICE_RE.sub(" ", message)
+    normalized_lines = [" ".join(line.split()) for line in cleaned.splitlines()]
+    return "\n".join(normalized_lines).strip(), True
+
+
+def _strip_direct_channel_reply_directive(message: str) -> tuple[str, str | None, bool]:
+    reply_to_id: str | None = None
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal reply_to_id
+        candidate = match.group(1).strip()
+        if candidate:
+            reply_to_id = candidate
+        return " "
+
+    has_reply_to = _DIRECT_CHANNEL_REPLY_TO_RE.search(message) is not None
+    has_reply_to_current = _DIRECT_CHANNEL_REPLY_TO_CURRENT_RE.search(message) is not None
+    if not has_reply_to and not has_reply_to_current:
+        return message, None, False
+    cleaned = _DIRECT_CHANNEL_REPLY_TO_RE.sub(replace, message)
+    cleaned = _DIRECT_CHANNEL_REPLY_TO_CURRENT_RE.sub(" ", cleaned)
+    normalized_lines = [" ".join(line.split()) for line in cleaned.splitlines()]
+    return "\n".join(normalized_lines).strip(), reply_to_id, has_reply_to_current
+
+
+def _split_direct_channel_media_directives(
+    message: str,
+    *,
+    extract_markdown_images: bool = False,
+) -> tuple[str, list[str], bool, str | None, bool]:
+    kept_lines: list[str] = []
+    media_urls: list[str] = []
+    for line in str(message or "").splitlines():
+        stripped = line.strip()
+        if not stripped.upper().startswith("MEDIA:"):
+            if extract_markdown_images:
+                cleaned_line, markdown_media_urls = (
+                    _split_direct_channel_markdown_image_media(line)
+                )
+                if markdown_media_urls:
+                    media_urls.extend(markdown_media_urls)
+                    if cleaned_line:
+                        kept_lines.append(cleaned_line)
+                    continue
+            kept_lines.append(line)
+            continue
+        payload = stripped[len("MEDIA:") :].strip()
+        candidates = [
+            part.strip().strip("`\"'[](){} ,")
+            for part in payload.split()
+            if part.strip()
+        ]
+        valid_candidates = [
+            candidate
+            for candidate in candidates
+            if _looks_like_direct_channel_media_source(candidate)
+        ]
+        if not valid_candidates:
+            if any(
+                _direct_channel_media_source_is_rejected_local_path(candidate)
+                for candidate in candidates
+            ):
+                continue
+            kept_lines.append(line)
+            continue
+        media_urls.extend(valid_candidates)
+    text_without_media = "\n".join(kept_lines).strip()
+    text_without_audio, audio_as_voice = _strip_direct_channel_audio_directive(
+        text_without_media
+    )
+    (
+        text_without_reply,
+        reply_to_id,
+        reply_to_current,
+    ) = _strip_direct_channel_reply_directive(text_without_audio)
+    return text_without_reply, media_urls, audio_as_voice, reply_to_id, reply_to_current
+
+
 def _normalize_gateway_client_scopes(value: object) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
         return ()
@@ -31588,6 +31844,7 @@ class OpsMeshService:
         reply_to_id_source: Literal["explicit", "implicit"] | None = None,
         reply_to_mode: Literal["off", "first", "all", "batched"] | None = None,
         reply_token: str | None = None,
+        current_message_id: str | int | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
         channel_data: dict[str, object] | None = None,
@@ -31615,7 +31872,26 @@ class OpsMeshService:
         )
         if conversation_target is None:
             raise ValueError("send requires an explicit channel target")
-        normalized_media_urls = _normalize_direct_channel_media_urls(media_urls=media_urls)
+        (
+            message_without_media_directives,
+            directive_media_urls,
+            directive_audio_as_voice,
+            directive_reply_to_id,
+            directive_reply_to_current,
+        ) = _split_direct_channel_media_directives(
+            message,
+            extract_markdown_images=_direct_channel_extract_markdown_images_enabled(
+                channel
+            ),
+        )
+        combined_media_urls = list(media_urls or [])
+        combined_media_urls.extend(directive_media_urls)
+        normalized_media_urls = _normalize_direct_channel_media_urls(
+            media_urls=combined_media_urls
+        )
+        resolved_audio_as_voice = audio_as_voice
+        if resolved_audio_as_voice is None and directive_audio_as_voice:
+            resolved_audio_as_voice = True
         normalized_location = _normalize_line_location_payload(location)
         normalized_flex_message = _normalize_line_flex_message_payload(flex_message)
         normalized_template_message = _normalize_line_template_message_payload(
@@ -31623,9 +31899,13 @@ class OpsMeshService:
         )
         normalized_channel_data = dict(channel_data) if channel_data is not None else None
         has_channel_data_payload = bool(normalized_channel_data)
-        normalized_message = "" if has_channel_data_payload and not message.strip() else message
+        normalized_message = (
+            ""
+            if has_channel_data_payload and not message_without_media_directives.strip()
+            else message_without_media_directives
+        )
         if (
-            not message.strip()
+            not normalized_message.strip()
             and not normalized_media_urls
             and normalized_location is None
             and normalized_flex_message is None
@@ -31659,9 +31939,9 @@ class OpsMeshService:
                 payload["trackingId"] = normalized_tracking_id
             if gif_playback is not None:
                 payload["gifPlayback"] = gif_playback
-            if audio_as_voice is not None:
-                payload["audioAsVoice"] = audio_as_voice
-            if not message.strip():
+            if resolved_audio_as_voice is not None:
+                payload["audioAsVoice"] = resolved_audio_as_voice
+            if not normalized_message.strip():
                 payload["summary"] = _summarize_direct_channel_media(normalized_media_urls)
         if normalized_location is not None:
             payload["location"] = normalized_location
@@ -31672,7 +31952,9 @@ class OpsMeshService:
             payload["flexMessage"] = normalized_flex_message
         if normalized_template_message is not None:
             payload["templateMessage"] = normalized_template_message
-        normalized_reply_to_id = str(reply_to_id or "").strip() or None
+        normalized_reply_to_id = str(reply_to_id or "").strip() or directive_reply_to_id
+        if normalized_reply_to_id is None and directive_reply_to_current:
+            normalized_reply_to_id = _normalize_optional_payload_string(current_message_id)
         if normalized_reply_to_id is not None:
             payload["replyToId"] = normalized_reply_to_id
             normalized_reply_to_id_source = (
@@ -31739,7 +32021,7 @@ class OpsMeshService:
                 message=normalized_message,
                 media_urls=normalized_media_urls,
                 gif_playback=gif_playback if normalized_media_urls else None,
-                audio_as_voice=audio_as_voice if normalized_media_urls else None,
+                audio_as_voice=resolved_audio_as_voice if normalized_media_urls else None,
             ),
             route_scope_extra={
                 "source": "gateway.send",

@@ -8,7 +8,7 @@
 - Estimated chat/session contract subfamily parity: ~99.987% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `artifacts.list` / `artifacts.get` / `artifacts.download`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.995%;
   it is no longer the active queue head.
-- Estimated packaging/companion app breadth: ~11.3% after QR setup-code
+- Estimated packaging/companion app breadth: ~11.4% after QR setup-code
   safety/SecretRef slices, local QR token/password SecretRef resolution,
   SecretRef-template inference, explicit-auth hard-requirement, and
   auth-before-URL ordering parity,
@@ -22,11 +22,11 @@
   supersession, interactive supersession visibility, bootstrap profile
   bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear
   helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope
-  warnings, and device-token
+  warnings, Windows companion-node default command parity, and device-token
   scope/caller/visibility/disconnect guards; companion apps remain broadly
   open.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.99999995% after the runtime bridge doctor posture, native ACP client interactive replay, ACP persisted task-record child-cap counting, ACP `streamTo="parent"` requester-context preflight, ACP `resumeSessionId` requester-context preflight, ACP `resumeSessionId` ownership enforcement, ACP model/thinking override propagation, ACP configured runtime agent alias mapping, ACP runtime-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP thread-binding dispatch-failure cleanup, ACP accepted-spawn registration-failure cleanup, Docker runtime home bootstrap, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, top-level logs CLI tail/local-time formatting/truncation hint, native Zalo pairing list/approve/notify CLI, command-owner bootstrap, list default, bootstrap explanation, not-found error text, and disabled-account capability action gating, package-update downgrade confirmation, stored-channel package update dispatch, package-update post-core resume mode, package-update post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback, startup-optimization doctor notes, installed runtime session/control-UI contribution capture, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch/unhealthy-snapshot restart-health failure with restart-log/status follow-up diagnostics, gateway health `serverVersion` projection, `gateway status --deep` CLI alias coverage, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect human typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, deeper ACP bridge lifecycle edge cases, deeper installed plugin module import/activation, and broader runtime command ergonomics.
-- Estimated provider-native inbound/outbound breadth: ~99.999999% after Slack
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.99999997% after the runtime bridge doctor posture, native ACP client interactive replay, ACP persisted task-record child-cap counting, ACP `streamTo="parent"` requester-context preflight, ACP `resumeSessionId` requester-context preflight, ACP `resumeSessionId` ownership enforcement, ACP model/thinking override propagation, ACP configured runtime agent alias mapping, ACP runtime-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP thread-binding dispatch-failure cleanup, ACP accepted-spawn registration-failure cleanup, Docker runtime home bootstrap, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice, native Zalo pairing list/approve/notify CLI, command-owner bootstrap, list default, bootstrap explanation, not-found error text, and disabled-account capability action gating, package-update downgrade confirmation, stored-channel package update dispatch, package-update post-core resume mode, package-update post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback, startup-optimization doctor notes, installed runtime session/control-UI contribution capture, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch/unhealthy-snapshot restart-health failure with restart-log/status follow-up diagnostics, gateway health `serverVersion` projection, `gateway status --deep` CLI alias coverage, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect human typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, deeper ACP bridge lifecycle edge cases, deeper installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated provider-native inbound/outbound breadth: ~99.99999976% after Slack
   event/interactions/slash/signing coverage, command aliases/plugin command
   injection, WhatsApp reply fanout, Telegram media reply fanout/caption
   passthrough, Feishu media implicit reply fanout, Matrix implicit reply
@@ -53,8 +53,10 @@
   QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot
   file-media text follow-up delivery, and QQBot direct image/video media
   text follow-up delivery plus QQBot inline media text ordering/result
-  metadata, Matrix media/text implicit reply fanout, IRC media attachment
-  formatting, and Discord multi-media implicit reply fanout.
+  metadata, direct outbound `MEDIA:` / `[[audio_as_voice]]` /
+  `[[reply_to:...]]` / `[[reply_to_current]]` directive lifting,
+  Matrix media/text implicit reply fanout, IRC media attachment formatting, and
+  Discord multi-media implicit reply fanout.
 - Runtime helper addendum: imported `agent-runtime` core helper coverage is
   now verified in `a8e871a3` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `agent-runtime` model-selection helper
@@ -25596,6 +25598,257 @@ These are complete within the bounded OpenZues-local parity contract verified in
   "logs"` (`4 passed, 650 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
   --check`. Source/test checkpointed in `d9a631f6`.
+
+- Native `openzues logs --follow --interval <ms>` now polls the gateway log
+  tail using cursor resume semantics, prints the file header only once, and
+  stops cleanly on keyboard interruption. This closes `OZ-PKG-001DH`;
+  repo-wide parity remains estimated at ~99.9%, and runtime/CLI/doctor
+  native-bridge parity moves to ~99.99999996%.
+- Verified logs CLI follow polling with focused red/green
+  `python -m pytest tests\test_cli.py::test_logs_follow_reuses_cursor_and_prints_file_header_once -q`
+  (`1 failed` before implementation because `--follow`/`--interval` were
+  unsupported, then `1 passed`), adjacent logs proof
+  `python -m pytest tests\test_cli.py -q -k "logs"` (`5 passed, 650
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `f153e85d`.
+
+- Native `openzues logs --plain --cursor <past-eof>` reset notices now include
+  the upstream file-rotation explanation: `Log cursor reset (file rotated).`
+  This closes `OZ-PKG-001DI`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor native-bridge parity moves to ~99.99999997%.
+- Verified logs CLI reset notice parity with focused red/green
+  `python -m pytest tests\test_cli.py::test_logs_plain_reset_notice_mentions_file_rotation -q`
+  (`1 failed` before implementation because the file-rotation text was
+  missing, then `1 passed`), adjacent logs proof `python -m pytest
+  tests\test_cli.py -q -k "logs"` (`6 passed, 650 deselected`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `79050f2d`.
+
+- Windows companion-node default command policy now mirrors OpenClaw's Windows
+  platform defaults by allowing canvas, camera, location, device, system, and
+  `screen.snapshot` commands while continuing to exclude `screen.record`
+  unless explicitly configured. This closes `OZ-PKG-001DJ`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~11.4%.
+- Verified Windows node command policy with focused red/green
+  `python -m pytest tests\test_gateway_node_command_policy.py::test_windows_allowlist_matches_openclaw_companion_defaults -q`
+  (`1 failed` before implementation because Windows was system-only, then `1
+  passed`), adjacent policy proof `python -m pytest
+  tests\test_gateway_node_command_policy.py -q` (`3 passed`), `ruff check
+  src\openzues\services\gateway_node_command_policy.py
+  tests\test_gateway_node_command_policy.py`, `mypy
+  src\openzues\services\gateway_node_command_policy.py`, and focused `git diff
+  --check`. Source/test checkpointed in `9ca32c06`.
+
+- Direct provider-native outbound sends now lift OpenClaw-style `MEDIA:` lines
+  out of visible message text, merge them into `mediaUrl` / `mediaUrls`, and
+  persist the sanitized payload before native adapter delivery. This closes
+  `OZ-PROV-001GZ`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.9999993%.
+- Verified direct outbound media directive lifting with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_media_directive_for_native_adapter -q`
+  (`1 failed` before implementation because the `MEDIA:` line leaked as text,
+  then `1 passed`), adjacent provider/native proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "native_adapter or media_directive or provider_result_persistence"`
+  (`5 passed, 507 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `2da7e35d`.
+
+- Direct provider-native outbound sends now strip OpenClaw-style
+  `[[audio_as_voice]]` tags from visible caption text and project them into
+  persisted `audioAsVoice` metadata plus runtime `audio_as_voice` requests when
+  no explicit flag was supplied. This closes `OZ-PROV-001HA`; repo-wide parity
+  remains estimated at ~99.9%, and provider-native inbound/outbound breadth
+  moves to ~99.9999994%.
+- Verified outbound audio-as-voice directive lifting with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_audio_as_voice_directive -q`
+  (`1 failed` before implementation because the tag leaked as caption text,
+  then `1 passed`), adjacent provider/native proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "audio_as_voice or media_directive or native_adapter or provider_result_persistence"`
+  (`9 passed, 504 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `b8af69d1`.
+
+- Direct provider-native outbound sends now strip OpenClaw-style
+  `[[reply_to:...]]` tags from visible message text and project them into
+  persisted `replyToId` / `replyToIdSource` metadata plus runtime
+  `reply_to_id` requests when no explicit reply target was supplied. This
+  closes `OZ-PROV-001HB`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.9999995%.
+- Verified outbound reply directive lifting with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_reply_directive_for_native_adapter -q`
+  (`1 failed` before implementation because the tag leaked as visible text,
+  then `1 passed`), adjacent provider/native proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "reply_directive or audio_as_voice or media_directive or native_adapter or provider_result_persistence"`
+  (`10 passed, 504 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `ae23842d`.
+
+- Direct provider-native outbound sends now also strip OpenClaw-style
+  `[[reply_to_current]]` tags from visible message text when no current-message
+  context is available, preserving the sanitized outbound payload without
+  inventing a reply id. This closes `OZ-PROV-001HC`; repo-wide parity remains
+  estimated at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.9999996%.
+- Verified outbound `reply_to_current` directive stripping with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_strips_reply_to_current_directive -q`
+  (`1 failed` before implementation because the tag leaked as visible text,
+  then `1 passed`), explicit-reply guard proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_reply_directive_for_native_adapter -q`
+  (`1 passed`), adjacent provider/native proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "reply_to_current or reply_directive or audio_as_voice or media_directive or native_adapter or provider_result_persistence"`
+  (`11 passed, 504 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `15bd16d1`.
+
+- Direct provider-native outbound sends and gateway `send` now resolve
+  OpenClaw-style `[[reply_to_current]]` tags to the supplied current-message
+  context (`current_message_id` / `currentMessageId`), strip the tag from
+  visible text, and project the id into `replyToId` / `replyToIdSource` plus
+  runtime `reply_to_id` metadata without overriding explicit reply targets.
+  This closes `OZ-PROV-001HD`; repo-wide parity remains estimated at ~99.9%,
+  and provider-native inbound/outbound breadth moves to ~99.9999997%.
+- Verified outbound `reply_to_current` context resolution with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_resolves_reply_to_current_directive -q`
+  (`1 failed` before implementation because `current_message_id` was not
+  accepted, then `1 passed`) and
+  `python -m pytest tests\test_gateway_node_methods.py::test_send_resolves_reply_to_current_directive_from_current_message_id -q`
+  (`1 failed` before implementation because gateway `send` rejected
+  `currentMessageId`, then `1 passed`), adjacent provider/native proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "reply_to_current or reply_directive or audio_as_voice or media_directive or native_adapter or provider_result_persistence"`
+  (`12 passed, 504 deselected`), adjacent gateway proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "send_resolves_reply_to_current or send_parses_inline_reply_audio_and_media_directives or send_preserves_provider_native_reply_thread"`
+  (`3 passed, 1301 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py tests\test_ops_mesh.py
+  tests\test_gateway_node_methods.py`, `mypy
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py`, and focused `git diff
+  --check`. Source/test checkpointed in `de881dae`.
+
+- Direct provider-native outbound `MEDIA:` directive parsing now mirrors the
+  OpenClaw remote-media safety baseline by refusing to lift `http://` media
+  sources; those tokens remain visible text and no `mediaUrl` / `mediaUrls`
+  payload is persisted or sent. This closes `OZ-PROV-001HE`; repo-wide parity
+  remains estimated at ~99.9%, and provider-native inbound/outbound breadth
+  moves to ~99.99999971%.
+- Verified unsafe HTTP media directive handling with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_keeps_unsafe_http_media_directive_as_text -q`
+  (`1 failed` before implementation because the `http://` source was lifted as
+  media, then `1 passed`), HTTPS media guard proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_media_directive_for_native_adapter -q`
+  (`1 passed`), adjacent provider/native proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "http_media or media_directive or reply_to_current or reply_directive or audio_as_voice or native_adapter or provider_result_persistence"`
+  (`13 passed, 504 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `400c08c4`.
+
+- Direct provider-native outbound `MEDIA:` directive parsing now also rejects
+  OpenClaw-blocked HTTPS remote media hosts such as `localhost`, bare intranet
+  names, local/internal suffixes, malformed empty labels, and special-use IP
+  addresses before native delivery. This closes `OZ-PROV-001HF`; repo-wide
+  parity remains estimated at ~99.9%, and provider-native inbound/outbound
+  breadth moves to ~99.99999972%.
+- Verified blocked remote media host handling with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_keeps_localhost_media_directive_as_text -q`
+  (`1 failed` before implementation because `https://localhost/...` was lifted
+  as media, then `1 passed`), HTTP rejection guard proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_keeps_unsafe_http_media_directive_as_text -q`
+  (`1 passed`), HTTPS media guard proof
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_media_directive_for_native_adapter -q`
+  (`1 passed`), adjacent provider/native proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "localhost_media or http_media or media_directive or reply_to_current or reply_directive or audio_as_voice or native_adapter or provider_result_persistence"`
+  (`14 passed, 504 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `35bfa90d`.
+
+- Direct provider-native outbound `MEDIA:` directive parsing now accepts
+  OpenClaw-supported bare filenames with file extensions, such as
+  `MEDIA:image.png`, and lifts them into provider media metadata instead of
+  leaving the directive in visible text. This closes `OZ-PROV-001HG`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.99999973%.
+- Verified bare filename media lifting with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_bare_filename_media_directive -q`
+  (`1 failed` before implementation because `MEDIA:image.png` remained visible,
+  then `1 passed`), guard proofs for HTTPS media lifting, unsafe HTTP media
+  rejection, and localhost media rejection (`1 passed` each), adjacent
+  provider/native proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "bare_filename_media or localhost_media or http_media or media_directive or
+  reply_to_current or reply_directive or audio_as_voice or native_adapter or
+  provider_result_persistence"` (`15 passed, 504 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `b4d8ebc3`.
+
+- Direct provider-native outbound `MEDIA:` directive parsing now rejects
+  OpenClaw-blocked traversal and home-dir local path directives, such as
+  `MEDIA:../../../etc/passwd` and `MEDIA:~/.ssh/id_rsa`, by stripping the
+  directive from visible outbound text without delivering it as media. This
+  closes `OZ-PROV-001HH`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.99999974%.
+- Verified traversal/home-dir media rejection with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_strips_traversal_media_directive_without_lifting -q`
+  (`2 failed` before implementation because traversal/home paths were lifted as
+  media, then `2 passed`), guard proofs for bare filename media lifting, HTTPS
+  media lifting, unsafe HTTP media rejection, and localhost media rejection (`1
+  passed` each), adjacent provider/native proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "traversal_media or bare_filename_media or
+  localhost_media or http_media or media_directive or reply_to_current or
+  reply_directive or audio_as_voice or native_adapter or
+  provider_result_persistence"` (`17 passed, 504 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `ebd4fb9b`.
+
+- Direct provider-native outbound Telegram sends now honor OpenClaw's
+  `extractMarkdownImages` outbound-adapter posture for safe HTTPS markdown image
+  links, lifting `![chart](https://example.com/chart.png)` into provider media
+  metadata while preserving surrounding caption text. This closes
+  `OZ-PROV-001HI`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.99999975%.
+- Verified Telegram markdown-image media lifting with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_telegram_markdown_image -q`
+  (`1 failed` before implementation because the markdown image stayed in
+  visible text, then `1 passed`), guard proofs for bare filename media lifting,
+  traversal/home-dir media rejection, unsafe HTTP media rejection, and localhost
+  media rejection (`1 passed`, `2 passed`, `1 passed`, and `1 passed`),
+  adjacent provider/native proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "markdown_image or traversal_media or bare_filename_media or localhost_media
+  or http_media or media_directive or reply_to_current or reply_directive or
+  audio_as_voice or native_adapter or provider_result_persistence"` (`18
+  passed, 504 deselected`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, `mypy src\openzues\services\ops_mesh.py`, and
+  focused `git diff --check`. Source/test checkpointed in `77968bed`.
+
+- Direct provider-native outbound Telegram markdown-image extraction now keeps
+  balanced parentheses inside safe HTTPS image URLs, matching OpenClaw's
+  `splitMediaFromOutput` behavior for URLs such as
+  `https://example.com/a_(1).png`. This closes `OZ-PROV-001HJ`; repo-wide
+  parity remains estimated at ~99.9%, and provider-native inbound/outbound
+  breadth moves to ~99.99999976%.
+- Verified balanced-parenthesis markdown image extraction with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_telegram_markdown_image_with_parentheses -q`
+  (`1 failed` before implementation because the URL was truncated and `.png)`
+  remained visible, then `1 passed`), simple Telegram markdown-image proof,
+  bare filename media guard, traversal/home-dir media guard, unsafe HTTP media
+  guard, adjacent provider/native proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "markdown_image or traversal_media or
+  bare_filename_media or localhost_media or http_media or media_directive or
+  reply_to_current or reply_directive or audio_as_voice or native_adapter or
+  provider_result_persistence"` (`19 passed, 504 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `75bf8a39`.
 
 ## References
 
