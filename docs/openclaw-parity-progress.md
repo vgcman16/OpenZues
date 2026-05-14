@@ -8,7 +8,7 @@
 - Estimated chat/session contract subfamily parity: ~99.987% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `artifacts.list` / `artifacts.get` / `artifacts.download`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.995%;
   it is no longer the active queue head.
-- Estimated packaging/companion app breadth: ~10.9% after QR setup-code
+- Estimated packaging/companion app breadth: ~11.0% after QR setup-code
   safety/SecretRef slices, local QR token/password SecretRef resolution,
   SecretRef-template inference, explicit-auth hard-requirement, and
   auth-before-URL ordering parity,
@@ -20,7 +20,7 @@
   rendering, Zalo/plugin-SDK profile-aware pairing approval commands, pending
   device-pair queue timestamp stability, changed approval-snapshot
   supersession, interactive supersession visibility, bootstrap profile
-  bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/clear
+  bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear
   helpers, and device-token
   scope/caller/visibility/disconnect guards; companion apps remain broadly
   open.
@@ -25483,6 +25483,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\device_bootstrap_profile.py
   src\openzues\services\device_bootstrap_tokens.py`, and focused `git diff
   --check`. Source/test checkpointed in `dd4660fe`.
+
+- Native device bootstrap token handling can now restore a revoked token record
+  by token key, matching OpenClaw's send-failure recovery helper for QR/device
+  bootstrap delivery retries. This closes `OZ-COMP-001BU`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~11.0%.
+- Verified device-bootstrap token restore with focused red/green
+  `python -m pytest tests\test_device_bootstrap_tokens.py::test_restore_device_bootstrap_token_reinstates_revoked_record -q`
+  (`1 error` before implementation because the helper was absent, then `1
+  passed`), adjacent token proof `python -m pytest
+  tests\test_device_bootstrap_tokens.py -q` (`8 passed`), adjacent QR CLI
+  proof `python -m pytest tests\test_cli.py -q -k "qr_"` (`35 passed, 616
+  deselected`), `ruff check src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py
+  tests\test_device_bootstrap_tokens.py`, `mypy
+  src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py`, and focused `git diff
+  --check`. Source/test checkpointed in `ee419c3a`.
 
 ## References
 

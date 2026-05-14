@@ -13406,3 +13406,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity remains estimated at ~99.9%, and packaging/companion breadth moves
   to ~10.9%. Continue companion-app device flows, packaging/distribution, ACP
   lifecycle, provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native device bootstrap token handling can
+  now restore a revoked token record by token key for send-failure recovery.
+  Source/test checkpointed in `ee419c3a`; repo-wide parity remains estimated
+  at ~99.9%, and packaging/companion breadth moves to ~11.0%. Continue
+  companion-app device flows, packaging/distribution, ACP lifecycle, provider
+  action breadth, or setup/onboarding gaps.
