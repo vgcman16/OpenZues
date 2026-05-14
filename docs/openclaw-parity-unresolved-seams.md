@@ -13295,3 +13295,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~99.9%, and packaging/companion breadth moves to ~9.3%. Continue
   companion-app device flows, packaging/distribution, ACP lifecycle, provider
   action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now materializes local
+  `gateway.auth.token` SecretRefs before setup-code auth resolution and keeps
+  resolved token values out of CLI output. Source/test checkpointed in
+  `5ca11f09`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~9.4%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
