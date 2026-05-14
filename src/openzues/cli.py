@@ -99756,6 +99756,47 @@ def _qr_gateway_tailscale_config(
     return _qr_config_mapping(_qr_gateway_config(config_snapshot).get("tailscale"))
 
 
+def _qr_gateway_port(
+    *,
+    app_settings: Settings,
+    config_snapshot: Mapping[str, object] | None,
+) -> int:
+    env_port = _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_PORT"))
+    if env_port is not None:
+        try:
+            parsed_env_port = int(env_port)
+        except ValueError:
+            parsed_env_port = 0
+        if parsed_env_port > 0:
+            return parsed_env_port
+    config_port = _qr_gateway_config(config_snapshot).get("port")
+    if isinstance(config_port, int) and not isinstance(config_port, bool):
+        if config_port > 0:
+            return config_port
+    return app_settings.port
+
+
+def _resolve_qr_gateway_bind_url(
+    *,
+    app_settings: Settings,
+    config_snapshot: Mapping[str, object] | None,
+) -> tuple[str, str] | None:
+    gateway_config = _qr_gateway_config(config_snapshot)
+    bind_mode = str(gateway_config.get("bind") or "loopback").strip().lower()
+    if bind_mode != "custom":
+        return None
+    host = _qr_config_text(gateway_config.get("customBindHost"))
+    if host is None:
+        raise ValueError("gateway.bind=custom requires gateway.customBindHost.")
+    if _is_pairing_loopback_host(host):
+        raise ValueError(_qr_loopback_bind_error())
+    port = _qr_gateway_port(app_settings=app_settings, config_snapshot=config_snapshot)
+    return (
+        _normalize_pairing_setup_url(f"ws://{_format_pairing_host(host)}:{port}"),
+        "gateway.bind=custom",
+    )
+
+
 _TAILSCALE_STATUS_COMMAND_CANDIDATES = (
     "tailscale",
     "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
@@ -100397,6 +100438,12 @@ def _resolve_qr_gateway_url(
         )
     if normalized_remote_url is not None:
         return (normalized_remote_url, "gateway.remote.url")
+    bind_url = _resolve_qr_gateway_bind_url(
+        app_settings=app_settings,
+        config_snapshot=config_snapshot,
+    )
+    if bind_url is not None:
+        return bind_url
     if _is_pairing_loopback_host(app_settings.host):
         raise ValueError(_qr_loopback_bind_error())
     scheme = "wss" if remote else "ws"
