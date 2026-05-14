@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -11165,6 +11166,9 @@ def _openclaw_update_available_hint(payload: Mapping[str, object]) -> str | None
 _OPENCLAW_UPDATE_CHANNELS = {"stable", "beta", "dev"}
 _OPENCLAW_UPDATE_PACKAGE_MANAGERS = {"pnpm", "bun", "npm"}
 _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME = "openzues"
+_OPENZUES_UPDATE_CORE_PACKAGE_NAMES = frozenset(
+    {_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME, "@openzues/openzues"}
+)
 _OPENCLAW_UPDATE_GLOBAL_ROOT_DETECTION_TIMEOUT_SECONDS = 2.0
 _OPENZUES_MAIN_PACKAGE_SPEC = "github:openzues/openzues#main"
 _OPENCLAW_GATEWAY_SERVICE_MARKER = "openclaw"
@@ -11212,8 +11216,47 @@ def _openclaw_update_running_inside_gateway_service(
     return not service_kind or service_kind == _OPENCLAW_GATEWAY_SERVICE_KIND
 
 
+def _openclaw_update_read_package_json_name(root: Path) -> str | None:
+    package_json = root / "package.json"
+    if not _doctor_path_exists(package_json):
+        return None
+    try:
+        parsed = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed, Mapping):
+        return None
+    return _optional_cli_string(parsed.get("name"))
+
+
+def _openclaw_update_read_pyproject_name(root: Path) -> str | None:
+    pyproject = root / "pyproject.toml"
+    if not _doctor_path_exists(pyproject):
+        return None
+    try:
+        parsed = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    project = parsed.get("project") if isinstance(parsed, Mapping) else None
+    if not isinstance(project, Mapping):
+        return None
+    return _optional_cli_string(project.get("name"))
+
+
+def _openclaw_update_is_openzues_git_root(root: Path) -> bool:
+    package_name = _openclaw_update_read_package_json_name(root)
+    if package_name is not None:
+        return package_name in _OPENZUES_UPDATE_CORE_PACKAGE_NAMES
+    project_name = _openclaw_update_read_pyproject_name(root)
+    if project_name is not None:
+        return project_name in _OPENZUES_UPDATE_CORE_PACKAGE_NAMES
+    return root.name.lower() == _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME
+
+
 def _openclaw_update_install_kind(root: Path) -> str:
     if _doctor_path_exists(root / ".git"):
+        if not _openclaw_update_is_openzues_git_root(root):
+            return "not-openclaw-root"
         return "git"
     if _doctor_path_exists(root):
         return "package"
@@ -108934,6 +108977,17 @@ def update_root(
         return
     root = _openzues_package_root()
     install_kind = _openclaw_update_install_kind(root)
+    if install_kind == "not-openclaw-root":
+        payload = {
+            "status": "error",
+            "mode": "unknown",
+            "root": str(root),
+            "reason": "not-openclaw-root",
+            "steps": [],
+            "durationMs": 0,
+        }
+        _emit_update_run_result(payload, json_output=json_output)
+        raise typer.Exit(code=1)
     if install_kind == "package":
         if _openclaw_update_running_inside_gateway_service():
             typer.echo(

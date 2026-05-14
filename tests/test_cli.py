@@ -29195,6 +29195,39 @@ def test_update_json_dispatches_runtime_update_service(
     assert payload["mode"] == "git"
 
 
+def test_update_json_rejects_non_openzues_git_root_before_runtime(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "not-openzues"
+    (package_root / ".git").mkdir(parents=True)
+    (package_root / "package.json").write_text(
+        json.dumps({"name": "not-openzues"}),
+        encoding="utf-8",
+    )
+    seen: dict[str, bool] = {}
+
+    class FakeRuntimeUpdates:
+        async def run_update(self, **_kwargs: object) -> dict[str, object]:
+            seen["called"] = True
+            return {"status": "ok", "mode": "git", "steps": [], "durationMs": 1}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(runtime_updates=FakeRuntimeUpdates()))
+
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "--json", "--yes"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "error"
+    assert payload["reason"] == "not-openclaw-root"
+    assert payload["root"] == str(package_root)
+    assert seen == {}
+
+
 def test_update_json_passes_dev_target_ref_env_to_git_runtime(
     tmp_path,
     monkeypatch,
