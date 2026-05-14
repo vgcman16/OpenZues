@@ -13510,6 +13510,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and browser/canvas/nodes/voice bounded-command parity moves to ~99.996%.
   Continue exact plugin helper subpaths, provider media edges,
   packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native OpenClaw plugin SDK imports now expose
+  exact scoped and unscoped `test-helpers/import-side-effects` subpaths with
+  only `assertNoImportTimeSideEffects`, matching the upstream helper instead
+  of the generic SDK fallback. Source/test checkpointed in `6cdf4ea3`;
+  repo-wide parity remains estimated at ~99.9%, and runtime/CLI/doctor
+  native-bridge parity moves to ~99.99999998%. Continue provider media edges,
+  packaging/distribution, ACP lifecycle depth, or companion breadth.
 - Current queue-head adjustment: direct provider-native outbound sends now
   lift `MEDIA:` directives out of visible message text and persist/deliver them
   as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;
