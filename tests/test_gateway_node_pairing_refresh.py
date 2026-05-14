@@ -68,6 +68,7 @@ class _FakePairingDatabase:
             "scopes": list(scopes or []),
             "remote_ip": remote_ip,
             "silent": bool(silent),
+            "silent_explicit": silent is not None,
             "requested_at_ms": requested_at_ms,
             "created_at": existing.get("created_at"),
             "updated_at": existing.get("updated_at"),
@@ -372,7 +373,81 @@ async def test_pair_request_changed_roles_or_scopes_supersedes_pending_request()
 
 
 @pytest.mark.asyncio
-async def test_pair_request_refresh_preserves_silent_when_omitted() -> None:
+async def test_pair_request_supersession_preserves_interactive_silent_false() -> None:
+    service = GatewayNodePairingService(_FakePairingDatabase())
+
+    first = await service.request(
+        node_id="pair-node-interactive-supersede",
+        public_key="public-key-interactive-supersede",
+        display_name="Interactive Supersede Node",
+        platform="ios",
+        version=None,
+        core_version=None,
+        ui_version=None,
+        device_family=None,
+        model_identifier=None,
+        caps=None,
+        commands=None,
+        role="node",
+        roles=None,
+        scopes=[],
+        remote_ip=None,
+        silent=False,
+        now_ms=1_000,
+    )
+    second = await service.request(
+        node_id="pair-node-interactive-supersede",
+        public_key="public-key-interactive-supersede",
+        display_name="Interactive Supersede Node",
+        platform=None,
+        version=None,
+        core_version=None,
+        ui_version=None,
+        device_family=None,
+        model_identifier=None,
+        caps=None,
+        commands=None,
+        role="operator",
+        roles=None,
+        scopes=["operator.read"],
+        remote_ip=None,
+        silent=True,
+        now_ms=2_000,
+    )
+    listed = await service.list_pending()
+
+    assert first["request"]["silent"] is False
+    assert second["created"] is True
+    assert second["request"]["requestId"] != first["request"]["requestId"]
+    assert second["request"]["roles"] == ["node", "operator"]
+    assert second["request"]["scopes"] == ["operator.read"]
+    assert second["request"]["silent"] is False
+    assert listed == [
+        {
+            "requestId": second["request"]["requestId"],
+            "nodeId": "pair-node-interactive-supersede",
+            "displayName": "Interactive Supersede Node",
+            "platform": "ios",
+            "version": None,
+            "coreVersion": None,
+            "uiVersion": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "caps": [],
+            "commands": [],
+            "remoteIp": None,
+            "silent": False,
+            "ts": 2_000,
+            "requiredApproveScopes": ["operator.pairing"],
+            "publicKey": "public-key-interactive-supersede",
+            "roles": ["node", "operator"],
+            "scopes": ["operator.read"],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_pair_request_refresh_marks_request_interactive_when_silent_omitted() -> None:
     service = GatewayNodePairingService(_FakePairingDatabase())
 
     created = await service.request(
@@ -423,7 +498,7 @@ async def test_pair_request_refresh_preserves_silent_when_omitted() -> None:
             "caps": [],
             "commands": [],
             "remoteIp": None,
-            "silent": True,
+            "silent": False,
             "ts": 1_000,
         },
         "created": False,
@@ -442,7 +517,7 @@ async def test_pair_request_refresh_preserves_silent_when_omitted() -> None:
             "caps": [],
             "commands": [],
             "remoteIp": None,
-            "silent": True,
+            "silent": False,
             "ts": 1_000,
             "requiredApproveScopes": ["operator.pairing"],
         }
@@ -501,6 +576,7 @@ async def test_pair_request_refresh_clears_silent_when_false() -> None:
             "caps": [],
             "commands": [],
             "remoteIp": None,
+            "silent": False,
             "ts": 1_000,
         },
         "created": False,
@@ -519,6 +595,7 @@ async def test_pair_request_refresh_clears_silent_when_false() -> None:
             "caps": [],
             "commands": [],
             "remoteIp": None,
+            "silent": False,
             "ts": 1_000,
             "requiredApproveScopes": ["operator.pairing"],
         }
