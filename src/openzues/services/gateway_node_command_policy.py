@@ -25,6 +25,7 @@ _REMINDERS_COMMANDS = ("reminders.list",)
 _PHOTOS_COMMANDS = ("photos.latest",)
 _MOTION_COMMANDS = ("motion.activity", "motion.pedometer")
 _SCREEN_COMMANDS = ("screen.snapshot",)
+_IOS_SCREEN_COMMANDS = ("screen.record",)
 _IOS_SYSTEM_COMMANDS = ("system.notify",)
 _SYSTEM_COMMANDS = (
     "system.run.prepare",
@@ -51,6 +52,7 @@ _PLATFORM_DEFAULTS: dict[str, tuple[str, ...]] = {
         *_REMINDERS_COMMANDS,
         *_PHOTOS_COMMANDS,
         *_MOTION_COMMANDS,
+        *_IOS_SCREEN_COMMANDS,
         *_IOS_SYSTEM_COMMANDS,
     ),
     "android": (
