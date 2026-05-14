@@ -20172,7 +20172,10 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
         "plugins": [dict(plugin) for plugin in plugin_rows],
         "rawConfig": dict(config_snapshot),
         "config": resolved_config,
-        "activationSourceConfig": dict(config_snapshot),
+        "activationSourceConfig": _plugin_runtime_activation_source_config_from_rows(
+            config_snapshot,
+            plugin_rows,
+        ),
         "autoEnabledReasons": auto_enabled_reasons,
         "env": dict(os.environ),
         "onlyPluginIds": only_plugin_ids,
@@ -20270,6 +20273,28 @@ def _plugin_runtime_resolved_config_from_rows(
         channel_id = _normalize_openclaw_channel_plugin_id(plugin_id)
         if channel_id is not None:
             _plugin_runtime_enable_channel_config(resolved, channel_id)
+    resolved["plugins"] = plugins
+    return resolved
+
+
+def _plugin_runtime_activation_source_config_from_rows(
+    config_snapshot: Mapping[str, object],
+    plugin_rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    resolved = copy.deepcopy(dict(config_snapshot))
+    auto_enabled_plugin_ids = _plugin_auto_enabled_plugin_ids_from_rows(plugin_rows)
+    if not auto_enabled_plugin_ids:
+        return resolved
+
+    plugins_value = resolved.get("plugins")
+    plugins = dict(plugins_value) if isinstance(plugins_value, Mapping) else {}
+    allow_value = plugins.get("allow")
+    allow = list(allow_value) if isinstance(allow_value, list) else []
+    for plugin_id in auto_enabled_plugin_ids:
+        if plugin_id not in allow:
+            allow.append(plugin_id)
+        _plugin_runtime_enable_plugin_entry(plugins, plugin_id)
+    plugins["allow"] = allow
     resolved["plugins"] = plugins
     return resolved
 

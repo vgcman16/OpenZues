@@ -15151,7 +15151,10 @@ def test_plugins_doctor_json_activation_adapter_receives_resolved_auto_enabled_c
     assert result.exit_code == 0, result.stdout
     assert calls
     context = calls[-1]
-    assert context["activationSourceConfig"]["plugins"]["allow"] == []
+    assert context["activationSourceConfig"]["plugins"]["allow"] == ["telegram"]
+    assert context["activationSourceConfig"]["plugins"].get("entries") == {
+        "telegram": {"enabled": True}
+    }
     assert context["activationSourceConfig"]["channels"]["telegram"] == {
         "botToken": "configured"
     }
