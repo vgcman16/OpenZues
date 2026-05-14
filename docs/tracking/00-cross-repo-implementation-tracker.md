@@ -27,13 +27,13 @@ Hermes or Warp integration.
 | Provider-native inbound/outbound breadth | ~99.99999978% | Near-complete bounded provider path; QQBot route-backed text/media sends, inline tags, structured self-closing media tags, reply sequencing, local media upload, chunked local media upload, voice-to-file fallback, file-media text follow-up delivery, direct image/video media text follow-up delivery, inline media text ordering/result metadata, Matrix route-backed implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, Google Chat add-on body-token webhook ingress, and safe direct outbound MEDIA/audio-as-voice/reply/reply-current stripping plus current-message resolution are checkpointed while broader provider inventory remains open | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.99999998% | Mostly landed; ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice, startup optimization, packaging, and installed plugin depth are advancing | `docs/openclaw-parity-progress.md` |
 | CLI/operator control plane | ~99.99999% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
-| Packaging/companion app breadth | ~12.1% | Minimal, active broad parity still open; local QR token/password SecretRef resolution plus SecretRef-template inference, Zalo/plugin-SDK profile-aware pairing approval commands, pending device-pair queue timestamp stability, changed approval-snapshot supersession, interactive supersession visibility, bootstrap profile bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope warnings, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, Windows companion-node command defaults and iOS screen/chat/talk/capability, Android action, and macOS exec-approval/camera/screen command policies are now checkpointed | `docs/openclaw-parity-progress.md` |
+| Packaging/companion app breadth | ~11.4% | Minimal, active broad parity still open; local QR token/password SecretRef resolution plus SecretRef-template inference, Zalo/plugin-SDK profile-aware pairing approval commands, pending device-pair queue timestamp stability, changed approval-snapshot supersession, interactive supersession visibility, bootstrap profile bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope warnings, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, and Windows companion-node command defaults are now checkpointed; app-advertised dangerous command defaults from `OZ-COMP-001BY` through `OZ-COMP-001CE` are superseded and not counted | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
 
-Latest verified adjustment: `OZ-COMP-001CE` macOS companion screen recording
-command policy is source/test checkpointed in `29368f38`, moving packaging/
-companion breadth to ~12.1%. Repo-wide OpenClaw parity remains
+Latest verified adjustment: `OZ-COMP-001CF` OpenClaw gateway node command
+policy correction is source/test checkpointed in `e8417d65`, returning
+packaging/companion breadth to ~11.4%. Repo-wide OpenClaw parity remains
 estimated at
 ~99.9%.
 
@@ -96,40 +96,18 @@ is checkpointed in `6cdf4ea3`, and runtime/CLI/doctor native-bridge parity is
 now ~99.99999998%. Next mapped queue heads are remaining
 provider/packaging/companion breadth.
 
-Companion addendum: `OZ-COMP-001BY` iOS companion `screen.record` command
-policy is checkpointed in `deeb546d`, and packaging/companion breadth is now
-~11.5%. Continue companion app device flows, provider media edges,
-packaging/distribution, or ACP lifecycle depth.
+Historical companion probes: `OZ-COMP-001BY` through `OZ-COMP-001CE`
+(`deeb546d`, `ddd70a86`, `dc72a787`, `669c3dc0`, `5b9f287b`, `dae05faa`,
+and `29368f38`) are superseded by `OZ-COMP-001CF`. They were app-advertised
+command probes, not authoritative gateway-default parity, and are no longer
+counted in the packaging/companion percentage.
 
-Companion addendum: `OZ-COMP-001BZ` iOS companion `chat.push` and `talk.ptt.*`
-command policy is checkpointed in `ddd70a86`, and packaging/companion breadth
-is now ~11.6%. Continue companion app device flows, provider media edges,
-packaging/distribution, or ACP lifecycle depth.
-
-Companion addendum: `OZ-COMP-001CA` iOS companion capability command policy is
-checkpointed in `dc72a787`, and packaging/companion breadth is now ~11.7%.
-Continue companion app device flows, provider media edges,
-packaging/distribution, or ACP lifecycle depth.
-
-Companion addendum: `OZ-COMP-001CB` Android companion action command policy is
-checkpointed in `669c3dc0`, and packaging/companion breadth is now ~11.8%.
-Continue companion app device flows, provider media edges,
-packaging/distribution, or ACP lifecycle depth.
-
-Companion addendum: `OZ-COMP-001CC` macOS companion exec-approval command
-policy is checkpointed in `5b9f287b`, and packaging/companion breadth is now
-~11.9%. Continue companion app device flows, provider media edges,
-packaging/distribution, or ACP lifecycle depth.
-
-Companion addendum: `OZ-COMP-001CD` macOS companion camera action command
-policy is checkpointed in `dae05faa`, and packaging/companion breadth is now
-~12.0%. Continue companion app device flows, provider media edges,
-packaging/distribution, or ACP lifecycle depth.
-
-Companion addendum: `OZ-COMP-001CE` macOS companion screen recording command
-policy is checkpointed in `29368f38`, and packaging/companion breadth is now
-~12.1%. Continue companion app device flows, provider media edges,
-packaging/distribution, or ACP lifecycle depth.
+Companion correction: `OZ-COMP-001CF` realigns the OpenZues gateway node
+command policy with `openclaw-main/src/gateway/node-command-policy.ts`, so
+`OZ-COMP-001BY` through `OZ-COMP-001CE` are retained only as historical
+app-advertisement probes and no longer count toward weighted OpenClaw gateway
+parity. Source/test checkpointed in `e8417d65`; packaging/companion breadth is
+now ~11.4%.
 
 Gateway/session addendum: `OZ-SESSION-001AA` requester-scoped
 `agents_list` spawn-target projection is checkpointed in `6b74d38e`; it

@@ -23,17 +23,40 @@ may lag behind this tracker.
 | Provider-native inbound/outbound breadth | ~99.99999978% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Matrix implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, Google Chat add-on body-token webhook ingress, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot structured self-closing media tags, QQBot reply message sequencing, QQBot local media file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot file-media text follow-up delivery, QQBot direct image/video media text follow-up delivery, QQBot inline media text ordering/result metadata, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, safe direct outbound MEDIA/audio-as-voice/reply/reply-current stripping plus current-message resolution, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.99999998% | High for bounded native bridge | ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, installed runtime contribution capture, and plugin helper exact subpaths are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
-| Packaging/companion app breadth | ~12.1% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, Zalo/plugin-SDK profile-aware pairing approval commands, pending device-pair queue timestamp stability, changed approval-snapshot supersession, interactive supersession visibility, bootstrap profile bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope warnings, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR SecretRef-template inference, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, QR local token SecretRef resolution, Windows companion-node command defaults, and iOS screen/chat/talk/capability, Android action, and macOS exec-approval/camera/screen command policies are landed; companion apps remain mostly open |
+| Packaging/companion app breadth | ~11.4% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, Zalo/plugin-SDK profile-aware pairing approval commands, pending device-pair queue timestamp stability, changed approval-snapshot supersession, interactive supersession visibility, bootstrap profile bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope warnings, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR SecretRef-template inference, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, QR local token SecretRef resolution, and Windows companion-node command defaults are landed; app-advertised dangerous command probes from `OZ-COMP-001BY` through `OZ-COMP-001CE` are superseded and not counted; companion apps remain mostly open |
 
-Latest verified adjustment: `OZ-COMP-001CE` macOS companion screen recording
-command policy is source/test checkpointed in `29368f38`, moving packaging/
-companion breadth to ~12.1%. Repo-wide OpenClaw parity remains
+Latest verified adjustment: `OZ-COMP-001CF` OpenClaw gateway node command
+policy correction is source/test checkpointed in `e8417d65`, returning
+packaging/companion breadth to ~11.4%. Repo-wide OpenClaw parity remains
 estimated at
 ~99.9%.
 
 ## Implemented / Locked Bounded Areas
 
-- [x] `OZ-COMP-001CE` macOS companion screen recording command policy.
+- [x] `OZ-COMP-001CF` OpenClaw gateway node command policy correction.
+  - Source:
+    `openclaw-main/src/gateway/node-command-policy.ts`,
+    `openclaw-main/src/gateway/gateway-misc.test.ts`,
+    `openclaw-main/src/gateway/server-methods/nodes.ts`,
+    `openclaw-main/src/gateway/server-methods/exec-approvals.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_command_policy.py`,
+    `tests/test_gateway_node_command_policy.py`
+  - Contract: gateway node command defaults match OpenClaw's safe
+    platform allowlists; app-advertised dangerous actions remain gated by
+    explicit allowlist or dedicated gateway methods such as
+    `exec.approvals.node.*`.
+  - Evidence required: focused command-policy red/green proof, adjacent
+    command-policy proof, ruff, mypy
+  - Status: checkpointed in `e8417d65`
+  - Weight: 1 correction, no positive parity credit
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_command_policy.py -q` (`4
+    failed` before implementation because dangerous commands were default
+    allowed, then `7 passed`), ruff, mypy, and focused `git diff --check`.
+
+- [ ] `OZ-COMP-001CE` macOS companion screen recording command policy
+  (superseded; app-advertisement probe, not counted as gateway default parity).
   - Source:
     `openclaw-main/apps/macos/Sources/OpenClaw/NodeMode/MacNodeModeCoordinator.swift`,
     `openclaw-main/apps/macos/Sources/OpenClaw/NodeMode/MacNodeScreenCommands.swift`
@@ -45,8 +68,8 @@ estimated at
     normalization, while Windows/Linux keep their default denial.
   - Evidence required: focused macOS screen-command allowlist proof, adjacent
     command-policy proof, ruff, mypy
-  - Status: checkpointed in `29368f38`
-  - Weight: 1
+  - Status: superseded by `OZ-COMP-001CF`; not counted
+  - Weight: 0
   - Last verified: 2026-05-14, focused red/green
     `python -m pytest tests\test_gateway_node_command_policy.py::test_macos_allowlist_includes_openclaw_screen_commands -q`
     (`1 failed` before implementation because `screen.record` was absent,
@@ -54,7 +77,8 @@ estimated at
     tests\test_gateway_node_command_policy.py -q` (`9 passed`), ruff, mypy,
     and focused `git diff --check`.
 
-- [x] `OZ-COMP-001CD` macOS companion camera action command policy.
+- [ ] `OZ-COMP-001CD` macOS companion camera action command policy
+  (superseded; app-advertisement probe, not counted as gateway default parity).
   - Source:
     `openclaw-main/apps/macos/Sources/OpenClaw/NodeMode/MacNodeModeCoordinator.swift`,
     `openclaw-main/apps/shared/OpenClawKit/Sources/OpenClawKit/CameraCommands.swift`
@@ -66,8 +90,8 @@ estimated at
     declared macOS companion camera commands survive normalization.
   - Evidence required: focused macOS camera-action allowlist proof, adjacent
     command-policy proof, ruff, mypy
-  - Status: checkpointed in `dae05faa`
-  - Weight: 1
+  - Status: superseded by `OZ-COMP-001CF`; not counted
+  - Weight: 0
   - Last verified: 2026-05-14, focused red/green
     `python -m pytest tests\test_gateway_node_command_policy.py::test_macos_allowlist_includes_openclaw_camera_action_commands -q`
     (`1 failed` before implementation because `camera.snap` was absent, then
@@ -75,7 +99,8 @@ estimated at
     tests\test_gateway_node_command_policy.py -q` (`9 passed`), ruff, mypy,
     and focused `git diff --check`.
 
-- [x] `OZ-COMP-001CC` macOS companion exec-approval command policy.
+- [ ] `OZ-COMP-001CC` macOS companion exec-approval command policy
+  (superseded; direct `node.invoke` default is gated upstream).
   - Source:
     `openclaw-main/apps/macos/Sources/OpenClaw/NodeMode/MacNodeModeCoordinator.swift`,
     `openclaw-main/apps/shared/OpenClawKit/Sources/OpenClawKit/SystemCommands.swift`
@@ -88,8 +113,8 @@ estimated at
     without widening Windows/Linux command defaults.
   - Evidence required: focused macOS exec-approval allowlist proof, adjacent
     command-policy proof, ruff, mypy
-  - Status: checkpointed in `5b9f287b`
-  - Weight: 1
+  - Status: superseded by `OZ-COMP-001CF`; not counted
+  - Weight: 0
   - Last verified: 2026-05-14, focused red/green
     `python -m pytest tests\test_gateway_node_command_policy.py::test_macos_allowlist_includes_openclaw_exec_approval_commands -q`
     (`1 failed` before implementation because `system.execApprovals.get` was
@@ -97,7 +122,8 @@ estimated at
     tests\test_gateway_node_command_policy.py -q` (`8 passed`), ruff, mypy,
     and focused `git diff --check`.
 
-- [x] `OZ-COMP-001CB` Android companion action command policy.
+- [ ] `OZ-COMP-001CB` Android companion action command policy
+  (superseded; dangerous actions are not gateway defaults upstream).
   - Source:
     `openclaw-main/apps/android/app/src/main/java/ai/openclaw/app/protocol/OpenClawProtocolConstants.kt`,
     `openclaw-main/apps/android/app/src/main/java/ai/openclaw/app/node/InvokeCommandRegistry.kt`
@@ -110,8 +136,8 @@ estimated at
     companion commands survive normalization.
   - Evidence required: focused Android action-command allowlist proof, adjacent
     command-policy proof, ruff, mypy
-  - Status: checkpointed in `669c3dc0`
-  - Weight: 1
+  - Status: superseded by `OZ-COMP-001CF`; not counted
+  - Weight: 0
   - Last verified: 2026-05-14, focused red/green
     `python -m pytest tests\test_gateway_node_command_policy.py::test_android_allowlist_includes_openclaw_action_command_defaults -q`
     (`1 failed` before implementation because `camera.snap` was absent, then
@@ -119,7 +145,8 @@ estimated at
     tests\test_gateway_node_command_policy.py -q` (`7 passed`), ruff, mypy,
     and focused `git diff --check`.
 
-- [x] `OZ-COMP-001CA` iOS companion capability command policy.
+- [ ] `OZ-COMP-001CA` iOS companion capability command policy
+  (superseded; app-advertisement probe, not counted as gateway default parity).
   - Source:
     `openclaw-main/apps/ios/Sources/Gateway/GatewayConnectionController.swift`,
     `openclaw-main/apps/shared/OpenClawKit/Sources/OpenClawKit/CameraCommands.swift`,
@@ -137,8 +164,8 @@ estimated at
     survive normalization.
   - Evidence required: focused iOS capability-command allowlist proof, adjacent
     command-policy proof, ruff, mypy
-  - Status: checkpointed in `dc72a787`
-  - Weight: 1
+  - Status: superseded by `OZ-COMP-001CF`; not counted
+  - Weight: 0
   - Last verified: 2026-05-14, focused red/green
     `python -m pytest tests\test_gateway_node_command_policy.py::test_ios_allowlist_includes_openclaw_capability_command_defaults -q`
     (`1 failed` before implementation because `camera.snap` was absent, then
@@ -146,7 +173,8 @@ estimated at
     tests\test_gateway_node_command_policy.py -q` (`6 passed`), ruff, mypy,
     and focused `git diff --check`.
 
-- [x] `OZ-COMP-001BZ` iOS companion chat/talk command policy.
+- [ ] `OZ-COMP-001BZ` iOS companion chat/talk command policy
+  (superseded; app-advertisement probe, not counted as gateway default parity).
   - Source:
     `openclaw-main/apps/ios/Sources/Gateway/GatewayConnectionController.swift`,
     `openclaw-main/apps/shared/OpenClawKit/Sources/OpenClawKit/ChatCommands.swift`,
@@ -161,8 +189,8 @@ estimated at
     normalization.
   - Evidence required: focused iOS chat/talk allowlist proof, adjacent
     command-policy proof, ruff, mypy
-  - Status: checkpointed in `ddd70a86`
-  - Weight: 1
+  - Status: superseded by `OZ-COMP-001CF`; not counted
+  - Weight: 0
   - Last verified: 2026-05-14, focused red/green
     `python -m pytest tests\test_gateway_node_command_policy.py::test_ios_allowlist_includes_openclaw_chat_and_talk_defaults -q`
     (`1 failed` before implementation because `chat.push` was absent, then
@@ -170,7 +198,8 @@ estimated at
     tests\test_gateway_node_command_policy.py -q` (`5 passed`), ruff, mypy,
     and focused `git diff --check`.
 
-- [x] `OZ-COMP-001BY` iOS companion `screen.record` command policy.
+- [ ] `OZ-COMP-001BY` iOS companion `screen.record` command policy
+  (superseded; `screen.record` is dangerous and explicit-allow only upstream).
   - Source:
     `openclaw-main/apps/ios/Sources/Gateway/GatewayConnectionController.swift`,
     `openclaw-main/apps/shared/OpenClawKit/Sources/OpenClawKit/ScreenCommands.swift`
@@ -183,8 +212,8 @@ estimated at
     existing default denial unless explicitly configured.
   - Evidence required: focused iOS allowlist proof, adjacent command-policy
     proof, ruff, mypy
-  - Status: checkpointed in `deeb546d`
-  - Weight: 1
+  - Status: superseded by `OZ-COMP-001CF`; not counted
+  - Weight: 0
   - Last verified: 2026-05-14, focused red/green
     `python -m pytest tests\test_gateway_node_command_policy.py::test_ios_allowlist_includes_openclaw_screen_record_default -q`
     (`1 failed` before implementation because `screen.record` was absent,
