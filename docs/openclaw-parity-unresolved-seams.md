@@ -13254,3 +13254,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   breadth moves to ~8.7%. Continue companion-app device flows,
   packaging/distribution, ACP lifecycle, provider action breadth, or
   setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now honors
+  `gateway.bind=lan` through a fakeable private-LAN IPv4 probe and returns the
+  OpenClaw-shaped missing-LAN-IP error before bootstrap-token issuance.
+  Source/test checkpointed in `c4f1acca`; repo-wide parity remains estimated
+  at ~99.9%, and packaging/companion breadth moves to ~8.8%. Continue
+  companion-app device flows, packaging/distribution, ACP lifecycle, provider
+  action breadth, or setup/onboarding gaps.

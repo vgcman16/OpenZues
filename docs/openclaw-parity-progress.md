@@ -25122,6 +25122,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `306b68dc`.
 
+- Native `openzues qr` now supports `gateway.bind=lan` by selecting a private
+  LAN IPv4 through a fakeable network probe, deriving the setup-code URL from
+  that address and `gateway.port`, and returning the upstream-shaped
+  `gateway.bind=lan set, but no private LAN IP was found.` error before
+  issuing a bootstrap token when no LAN address is available. This closes
+  `OZ-COMP-001AY`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.8%.
+- Verified QR LAN bind URL derivation with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_uses_lan_bind_host_from_network_probe tests\test_cli.py::test_qr_lan_bind_reports_missing_private_lan_ip_before_token_issue -q`
+  (`2 failed` before implementation because LAN bind config fell through to
+  the generic loopback preflight, then `2 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`25 passed, 616
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `c4f1acca`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)
