@@ -43,6 +43,7 @@ _IOS_TALK_COMMANDS = (
 _IOS_WATCH_COMMANDS = ("watch.status", "watch.notify")
 _SCREEN_COMMANDS = ("screen.snapshot",)
 _IOS_SCREEN_COMMANDS = ("screen.record",)
+_MACOS_SCREEN_COMMANDS = (*_SCREEN_COMMANDS, "screen.record")
 _IOS_SYSTEM_COMMANDS = ("system.notify",)
 _SYSTEM_COMMANDS = (
     "system.run.prepare",
@@ -106,7 +107,7 @@ _PLATFORM_DEFAULTS: dict[str, tuple[str, ...]] = {
         *_PHOTOS_COMMANDS,
         *_MOTION_COMMANDS,
         *_MACOS_SYSTEM_COMMANDS,
-        *_SCREEN_COMMANDS,
+        *_MACOS_SCREEN_COMMANDS,
     ),
     "desktop": _SYSTEM_COMMANDS,
     "linux": _SYSTEM_COMMANDS,

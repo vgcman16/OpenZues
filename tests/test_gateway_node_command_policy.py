@@ -4,14 +4,20 @@ from openzues.services.gateway_node_command_policy import (
 )
 
 
-def test_macos_allowlist_includes_screen_snapshot_but_not_screen_record() -> None:
+def test_macos_allowlist_includes_openclaw_screen_commands() -> None:
     allowlist = resolve_node_command_allowlist(
         platform="macOS 26.3.1",
         device_family="Mac",
     )
 
-    assert "screen.snapshot" in allowlist
-    assert "screen.record" not in allowlist
+    declared = ("screen.snapshot", "screen.record")
+
+    for command in declared:
+        assert command in allowlist
+    assert normalize_declared_node_commands(
+        declared,
+        allowlist=allowlist,
+    ) == declared
 
 
 def test_macos_allowlist_includes_openclaw_exec_approval_commands() -> None:
