@@ -11301,7 +11301,7 @@ async def test_ops_mesh_service_send_direct_channel_message_preserves_audio_as_v
     assert provider_requests[0] == GatewayOutboundRuntimeMessageRequest(
         channel="telegram",
         target="chat:ops",
-        message="voice caption\n\nMedia:\n1. file:///tmp/clip.mp3\n\nSettings: audioAsVoice=true",
+        message="voice caption",
         media_urls=("file:///tmp/clip.mp3",),
         audio_as_voice=True,
         session_key=expected_session_key,
@@ -11488,6 +11488,54 @@ async def test_ops_mesh_service_send_lifts_media_directive_for_native_adapter(
     assert delivery["event_payload"]["message"] == "Ship it"
     assert delivery["event_payload"]["mediaUrl"] == "https://example.com/chart.png"
     assert delivery["event_payload"]["mediaUrls"] == ["https://example.com/chart.png"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_lifts_audio_as_voice_directive(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-audio-directive"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-audio-directive-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message="Voice note [[audio_as_voice]]\nMEDIA:file:///tmp/clip.mp3",
+        idempotency_key="idem-audio-directive-send",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(provider_requests) == 1
+    assert provider_requests[0].message == "Voice note"
+    assert provider_requests[0].media_urls == ("file:///tmp/clip.mp3",)
+    assert provider_requests[0].audio_as_voice is True
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == "Voice note"
+    assert delivery["event_payload"]["audioAsVoice"] is True
 
 
 @pytest.mark.asyncio

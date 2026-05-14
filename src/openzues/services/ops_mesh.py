@@ -13157,7 +13157,21 @@ def _looks_like_direct_channel_media_source(value: str) -> bool:
     return ("/" in candidate or "\\" in candidate) and "." in candidate
 
 
-def _split_direct_channel_media_directives(message: str) -> tuple[str, list[str]]:
+_DIRECT_CHANNEL_AUDIO_AS_VOICE_RE = re.compile(
+    r"\[\[\s*audio_as_voice\s*\]\]",
+    re.IGNORECASE,
+)
+
+
+def _strip_direct_channel_audio_directive(message: str) -> tuple[str, bool]:
+    if _DIRECT_CHANNEL_AUDIO_AS_VOICE_RE.search(message) is None:
+        return message, False
+    cleaned = _DIRECT_CHANNEL_AUDIO_AS_VOICE_RE.sub(" ", message)
+    normalized_lines = [" ".join(line.split()) for line in cleaned.splitlines()]
+    return "\n".join(normalized_lines).strip(), True
+
+
+def _split_direct_channel_media_directives(message: str) -> tuple[str, list[str], bool]:
     kept_lines: list[str] = []
     media_urls: list[str] = []
     for line in str(message or "").splitlines():
@@ -13180,7 +13194,11 @@ def _split_direct_channel_media_directives(message: str) -> tuple[str, list[str]
             kept_lines.append(line)
             continue
         media_urls.extend(valid_candidates)
-    return "\n".join(kept_lines).strip(), media_urls
+    text_without_media = "\n".join(kept_lines).strip()
+    text_without_audio, audio_as_voice = _strip_direct_channel_audio_directive(
+        text_without_media
+    )
+    return text_without_audio, media_urls, audio_as_voice
 
 
 def _normalize_gateway_client_scopes(value: object) -> tuple[str, ...]:
@@ -31650,14 +31668,19 @@ class OpsMeshService:
         )
         if conversation_target is None:
             raise ValueError("send requires an explicit channel target")
-        message_without_media_directives, directive_media_urls = (
-            _split_direct_channel_media_directives(message)
-        )
+        (
+            message_without_media_directives,
+            directive_media_urls,
+            directive_audio_as_voice,
+        ) = _split_direct_channel_media_directives(message)
         combined_media_urls = list(media_urls or [])
         combined_media_urls.extend(directive_media_urls)
         normalized_media_urls = _normalize_direct_channel_media_urls(
             media_urls=combined_media_urls
         )
+        resolved_audio_as_voice = audio_as_voice
+        if resolved_audio_as_voice is None and directive_audio_as_voice:
+            resolved_audio_as_voice = True
         normalized_location = _normalize_line_location_payload(location)
         normalized_flex_message = _normalize_line_flex_message_payload(flex_message)
         normalized_template_message = _normalize_line_template_message_payload(
@@ -31705,8 +31728,8 @@ class OpsMeshService:
                 payload["trackingId"] = normalized_tracking_id
             if gif_playback is not None:
                 payload["gifPlayback"] = gif_playback
-            if audio_as_voice is not None:
-                payload["audioAsVoice"] = audio_as_voice
+            if resolved_audio_as_voice is not None:
+                payload["audioAsVoice"] = resolved_audio_as_voice
             if not normalized_message.strip():
                 payload["summary"] = _summarize_direct_channel_media(normalized_media_urls)
         if normalized_location is not None:
@@ -31785,7 +31808,7 @@ class OpsMeshService:
                 message=normalized_message,
                 media_urls=normalized_media_urls,
                 gif_playback=gif_playback if normalized_media_urls else None,
-                audio_as_voice=audio_as_voice if normalized_media_urls else None,
+                audio_as_voice=resolved_audio_as_voice if normalized_media_urls else None,
             ),
             route_scope_extra={
                 "source": "gateway.send",
