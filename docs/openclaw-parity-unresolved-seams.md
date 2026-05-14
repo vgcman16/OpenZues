@@ -191,7 +191,7 @@ Current percentage rollup:
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, disabled-account capability action gating, and Google Chat
   add-on body-token webhook ingress.
-- The packaging/companion app breadth family is estimated at ~12.0% after QR
+- The packaging/companion app breadth family is estimated at ~12.1% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
   gateway dispatch, remote device mutation dispatch, configured remote URL
@@ -208,8 +208,9 @@ Current percentage rollup:
   compatibility for device-token rotation, pairing approval seeded device-auth
   tokens, rotated token raw-value redaction for unbound callers, local QR
   password SecretRef resolution, cross-device pairing removal guards, Windows
-  companion-node default command parity, and remove/clear/reject/rotate/revoke
-  coverage.
+  companion-node default command parity, iOS screen/chat/talk/capability,
+  Android action, and macOS exec-approval/camera/screen command policies, and
+  remove/clear/reject/rotate/revoke coverage.
 - The CLI/operator control-plane family is estimated at ~99.99999% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -13555,6 +13556,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `dae05faa`; repo-wide parity remains estimated at ~99.9%, and packaging/
   companion breadth moves to ~12.0%. Continue companion app device flows,
   provider media edges, packaging/distribution, or ACP lifecycle depth.
+- Current queue-head adjustment: macOS companion node command policy now
+  includes OpenClaw's default `screen.record` command from
+  `MacNodeModeCoordinator` while preserving Windows/Linux default denial.
+  Source/test checkpointed in `29368f38`; repo-wide parity remains estimated
+  at ~99.9%, and packaging/companion breadth moves to ~12.1%. Continue
+  companion app device flows, provider media edges, packaging/distribution, or
+  ACP lifecycle depth.
 - Current queue-head adjustment: direct provider-native outbound sends now
   lift `MEDIA:` directives out of visible message text and persist/deliver them
   as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;
