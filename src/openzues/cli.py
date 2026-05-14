@@ -100453,6 +100453,12 @@ def _normalize_pairing_config_url(raw: str, *, invalid_error: str) -> str:
         raise
 
 
+def _qr_secret_input_text(value: object) -> str | None:
+    if _qr_secret_ref_parts(value) is not None:
+        return None
+    return _qr_config_text(value)
+
+
 def _resolve_qr_auth_label(
     *,
     token: str | None,
@@ -100470,9 +100476,9 @@ def _resolve_qr_auth_label(
     env_password = _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_PASSWORD"))
     if remote:
         remote_config = _qr_gateway_remote_config(config_snapshot)
-        if _qr_config_text(remote_config.get("token")):
+        if _qr_secret_input_text(remote_config.get("token")):
             return "token"
-        if _qr_config_text(remote_config.get("password")):
+        if _qr_secret_input_text(remote_config.get("password")):
             return "password"
 
     auth_config = _qr_config_mapping(gateway_config.get("auth"))
@@ -100488,11 +100494,11 @@ def _resolve_qr_auth_label(
         )
     has_token = (
         env_token is not None
-        or _qr_config_text(auth_config.get("token")) is not None
+        or _qr_secret_input_text(auth_config.get("token")) is not None
     )
     has_password = (
         env_password is not None
-        or _qr_config_text(auth_config.get("password")) is not None
+        or _qr_secret_input_text(auth_config.get("password")) is not None
     )
     if auth_mode == "password":
         if has_password:

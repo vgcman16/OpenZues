@@ -942,6 +942,53 @@ def test_qr_rejects_inferred_token_password_secretrefs_before_token_issue(
     assert not (data_dir / "devices" / "bootstrap.json").exists()
 
 
+def test_qr_inferred_mode_ignores_unresolved_token_template_when_password_env_set(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+    monkeypatch.setenv("OPENCLAW_GATEWAY_PASSWORD", "password-from-env")
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "bind": "custom",
+                    "customBindHost": "127.0.0.1",
+                    "port": 18789,
+                    "auth": {
+                        "token": "${MISSING_GW_TOKEN}",
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "password-from-env" not in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["auth"] == "password"
+    assert payload["gatewayUrl"] == "ws://127.0.0.1:18789"
+
+
 def test_qr_password_auth_mode_requires_password_before_token_issue(
     tmp_path,
     monkeypatch,
