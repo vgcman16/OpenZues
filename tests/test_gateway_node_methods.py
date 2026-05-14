@@ -114867,8 +114867,32 @@ async def test_browser_act_dispatches_to_configured_runtime() -> None:
     assert browser_runtime.calls == [("act", "click", "parity-browser")]
 
 
+@pytest.mark.asyncio
+async def test_browser_act_accepts_openclaw_click_double_click_request() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.act",
+        {
+            "session": "parity-browser",
+            "request": {"kind": "click", "ref": "@save", "doubleClick": True},
+        },
+    )
+
+    assert payload == {"ok": True, "session": "parity-browser", "kind": "click"}
+    assert browser_runtime.calls == [("act", "click", "parity-browser")]
+
+
 def test_browser_act_args_maps_bounded_action_subset() -> None:
     assert browser_act_args("click", {"kind": "click", "ref": "@e1"}) == ["click", "@e1"]
+    assert browser_act_args(
+        "click",
+        {"kind": "click", "ref": "@save", "doubleClick": True},
+    ) == ["dblclick", "@save"]
     assert browser_act_args("wait", {"kind": "wait", "timeMs": 250}) == ["wait", "250"]
     assert browser_act_args("type", {"kind": "type", "text": "hello"}) == [
         "keyboard",

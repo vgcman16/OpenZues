@@ -5006,6 +5006,7 @@ class GatewayNodeMethodService:
                 "selector",
                 "targetId",
                 "element",
+                "doubleClick",
                 "text",
                 "key",
                 "timeMs",

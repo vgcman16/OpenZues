@@ -3138,6 +3138,8 @@ def browser_act_args(kind: str, request: dict[str, Any]) -> list[str]:
         timeout_ms = browser_request_int(request, "timeoutMs") or 1000
         return ["wait", str(timeout_ms)]
     if kind == "click":
+        if browser_json_bool(request, "doubleClick") is True:
+            return ["dblclick", browser_required_selector(request, kind)]
         return ["click", browser_required_selector(request, kind)]
     if kind in {"dblclick", "doubleClick"}:
         return ["dblclick", browser_required_selector(request, kind)]
