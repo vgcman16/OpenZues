@@ -13329,3 +13329,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~99.9%, and packaging/companion breadth moves to ~9.8%. Continue
   companion-app device flows, packaging/distribution, ACP lifecycle, provider
   action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native OpenClaw plugin SDK
+  `buildPairingReply` now preserves OpenClaw profile/container command context
+  for imported plugin runtimes. Source/test checkpointed in `d137a71f`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~9.9%. Continue companion-app device flows,
+  packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
