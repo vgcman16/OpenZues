@@ -99861,8 +99861,6 @@ def _resolve_qr_gateway_bind_url(
         host = _qr_config_text(gateway_config.get("customBindHost"))
         if host is None:
             raise ValueError("gateway.bind=custom requires gateway.customBindHost.")
-        if _is_pairing_loopback_host(host):
-            raise ValueError(_qr_loopback_bind_error())
         return (
             _normalize_pairing_setup_url(f"{scheme}://{_format_pairing_host(host)}:{port}"),
             "gateway.bind=custom",
