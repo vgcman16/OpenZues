@@ -13246,3 +13246,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   packaging/companion breadth moves to ~8.6%. Continue companion-app device
   flows, packaging/distribution, ACP lifecycle, provider action breadth, or
   setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now honors
+  `gateway.bind=custom` with `gateway.customBindHost` and `gateway.port` for
+  non-remote setup-code URL derivation, and validates public cleartext custom
+  hosts before token issuance. Source/test checkpointed in `306b68dc`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~8.7%. Continue companion-app device flows,
+  packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.

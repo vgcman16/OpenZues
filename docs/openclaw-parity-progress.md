@@ -25108,6 +25108,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `ce3f78cd`.
 
+- Native `openzues qr` now derives non-remote setup-code URLs from
+  `gateway.bind=custom`, `gateway.customBindHost`, and `gateway.port` after
+  higher-priority public/remote/Tailscale sources, while still rejecting public
+  cleartext custom hosts before issuing a bootstrap token. This closes
+  `OZ-COMP-001AX`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.7%.
+- Verified QR custom bind URL config with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_uses_custom_bind_host_from_config_when_url_omitted tests\test_cli.py::test_qr_rejects_public_custom_bind_host_before_token_issue -q`
+  (`2 failed` before implementation because custom bind config was ignored,
+  then `2 passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py
+  -q -k "qr_"` (`23 passed, 616 deselected`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `306b68dc`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)
