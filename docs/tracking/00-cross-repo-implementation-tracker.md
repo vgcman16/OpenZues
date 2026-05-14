@@ -24,15 +24,15 @@ Hermes or Warp integration.
 | Active gateway/session/tool-contract path | ~99.969% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.987% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Provider-native inbound/outbound breadth | ~99.9999994% | Near-complete bounded provider path; QQBot route-backed text/media sends, inline tags, structured self-closing media tags, reply sequencing, local media upload, chunked local media upload, voice-to-file fallback, file-media text follow-up delivery, direct image/video media text follow-up delivery, inline media text ordering/result metadata, Matrix route-backed implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, and direct outbound MEDIA/audio-as-voice directive lifting are checkpointed while broader provider inventory remains open | `docs/openclaw-parity-progress.md` |
+| Provider-native inbound/outbound breadth | ~99.9999995% | Near-complete bounded provider path; QQBot route-backed text/media sends, inline tags, structured self-closing media tags, reply sequencing, local media upload, chunked local media upload, voice-to-file fallback, file-media text follow-up delivery, direct image/video media text follow-up delivery, inline media text ordering/result metadata, Matrix route-backed implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, and direct outbound MEDIA/audio-as-voice/reply directive lifting are checkpointed while broader provider inventory remains open | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.99999997% | Mostly landed; ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice, startup optimization, packaging, and installed plugin depth are advancing | `docs/openclaw-parity-progress.md` |
 | CLI/operator control plane | ~99.99999% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~11.4% | Minimal, active broad parity still open; local QR token/password SecretRef resolution plus SecretRef-template inference, Zalo/plugin-SDK profile-aware pairing approval commands, pending device-pair queue timestamp stability, changed approval-snapshot supersession, interactive supersession visibility, bootstrap profile bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope warnings, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, and Windows companion-node command defaults are now checkpointed | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
 
-Latest verified adjustment: `OZ-PROV-001HA` outbound `audio_as_voice` directive
-lifting moves provider-native inbound/outbound breadth to ~99.9999994%;
+Latest verified adjustment: `OZ-PROV-001HB` outbound `reply_to` directive
+lifting moves provider-native inbound/outbound breadth to ~99.9999995%;
 repo-wide OpenClaw parity remains estimated at ~99.9%.
 
 ## Current Worktree Boundary
@@ -3478,6 +3478,25 @@ companion breadth.
     `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_audio_as_voice_directive -q`
     (`1 failed` before implementation because the tag leaked as caption text,
     then `1 passed`), adjacent provider/native proof (`9 passed, 504
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001HB` Direct outbound `reply_to` directive lifting
+  - Source: `openclaw-main/src/utils/directive-tags.ts`,
+    `openclaw-main/src/infra/outbound/message-action-runner.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: direct provider-native outbound sends strip
+    `[[reply_to:<id>]]` from visible text and project the id into persisted
+    `replyToId` / `replyToIdSource` plus runtime `reply_to_id` metadata unless
+    an explicit reply target was already supplied.
+  - Evidence required: focused reply directive proof, adjacent provider/native
+    send proof, ruff, mypy
+  - Status: checkpointed in `ae23842d`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_reply_directive_for_native_adapter -q`
+    (`1 failed` before implementation because the tag leaked as visible text,
+    then `1 passed`), adjacent provider/native proof (`10 passed, 504
     deselected`), ruff, mypy, and focused `git diff --check`.
 
 - [x] `OZ-PROV-001DA` iMessage config-backed CLI/RPC account probe
