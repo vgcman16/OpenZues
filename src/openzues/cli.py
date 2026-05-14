@@ -100368,15 +100368,16 @@ def _resolve_qr_gateway_url(
             "plugins.entries.device-pair.config.publicUrl",
         )
     remote_url = _qr_config_text(_qr_gateway_remote_config(config_snapshot).get("url"))
-    if remote:
-        if remote_url:
-            return (
-                _normalize_pairing_config_url(
-                    remote_url,
-                    invalid_error="Configured gateway.remote.url is invalid.",
-                ),
-                "gateway.remote.url",
-            )
+    normalized_remote_url = (
+        _normalize_pairing_config_url(
+            remote_url,
+            invalid_error="Configured gateway.remote.url is invalid.",
+        )
+        if remote_url is not None
+        else None
+    )
+    if remote and normalized_remote_url is not None:
+        return (normalized_remote_url, "gateway.remote.url")
     tailscale_mode = str(
         _qr_gateway_tailscale_config(config_snapshot).get("mode") or "off"
     ).strip().lower()
@@ -100394,6 +100395,8 @@ def _resolve_qr_gateway_url(
         raise ValueError(
             "qr --remote requires gateway.remote.url (or gateway.tailscale.mode=serve/funnel)."
         )
+    if normalized_remote_url is not None:
+        return (normalized_remote_url, "gateway.remote.url")
     if _is_pairing_loopback_host(app_settings.host):
         raise ValueError(_qr_loopback_bind_error())
     scheme = "wss" if remote else "ws"
