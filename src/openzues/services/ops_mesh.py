@@ -13165,6 +13165,10 @@ _DIRECT_CHANNEL_REPLY_TO_RE = re.compile(
     r"\[\[\s*reply_to\s*:\s*([^\]\n]+)\s*\]\]",
     re.IGNORECASE,
 )
+_DIRECT_CHANNEL_REPLY_TO_CURRENT_RE = re.compile(
+    r"\[\[\s*reply_to_current\s*\]\]",
+    re.IGNORECASE,
+)
 
 
 def _strip_direct_channel_audio_directive(message: str) -> tuple[str, bool]:
@@ -13185,9 +13189,12 @@ def _strip_direct_channel_reply_directive(message: str) -> tuple[str, str | None
             reply_to_id = candidate
         return " "
 
-    if _DIRECT_CHANNEL_REPLY_TO_RE.search(message) is None:
+    has_reply_to = _DIRECT_CHANNEL_REPLY_TO_RE.search(message) is not None
+    has_reply_to_current = _DIRECT_CHANNEL_REPLY_TO_CURRENT_RE.search(message) is not None
+    if not has_reply_to and not has_reply_to_current:
         return message, None
     cleaned = _DIRECT_CHANNEL_REPLY_TO_RE.sub(replace, message)
+    cleaned = _DIRECT_CHANNEL_REPLY_TO_CURRENT_RE.sub(" ", cleaned)
     normalized_lines = [" ".join(line.split()) for line in cleaned.splitlines()]
     return "\n".join(normalized_lines).strip(), reply_to_id
 
