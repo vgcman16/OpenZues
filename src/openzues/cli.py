@@ -1672,18 +1672,22 @@ def _emit_logs_tail(
     *,
     json_output: bool,
     local_time: bool = False,
+    show_header: bool = True,
+    empty_notice: bool = True,
 ) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
         return
-    typer.echo(f"Log file: {payload.get('file') or ''}")
+    if show_header:
+        typer.echo(f"Log file: {payload.get('file') or ''}")
     if payload.get("truncated"):
         typer.echo("Log tail truncated (increase --max-bytes).", err=True)
     if payload.get("reset"):
         typer.echo("Log cursor reset.", err=True)
     lines = payload.get("lines")
     if not isinstance(lines, list) or not lines:
-        typer.echo("No log lines.")
+        if empty_notice:
+            typer.echo("No log lines.")
         return
     for line in lines:
         typer.echo(_format_log_tail_line(str(line), local_time=local_time))
@@ -100824,23 +100828,53 @@ def logs_command(
         "--local-time",
         help="Display parsed timestamps in the local timezone.",
     ),
+    follow: bool = typer.Option(
+        False,
+        "--follow",
+        help="Follow log output.",
+    ),
+    interval: int = typer.Option(
+        1000,
+        "--interval",
+        min=1,
+        help="Polling interval in milliseconds for --follow.",
+    ),
 ) -> None:
     _ = plain
+    current_cursor = cursor
+    first = True
 
     async def _action(services: CliServices) -> dict[str, object]:
         return await _build_logs_tail_payload(
             services,
-            cursor=cursor,
+            cursor=current_cursor,
             limit=limit,
             max_bytes=max_bytes,
         )
 
-    try:
-        payload = _run(_run_with_services(_action))
-    except ValueError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=1) from exc
-    _emit_logs_tail(payload, json_output=json_output, local_time=local_time)
+    while True:
+        try:
+            payload = _run(_run_with_services(_action))
+        except ValueError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+        _emit_logs_tail(
+            payload,
+            json_output=json_output,
+            local_time=local_time,
+            show_header=first,
+            empty_notice=not follow or first,
+        )
+        next_cursor = payload.get("cursor")
+        if isinstance(next_cursor, int):
+            current_cursor = next_cursor
+        first = False
+        if not follow:
+            return
+        try:
+            time.sleep(interval / 1000)
+        except KeyboardInterrupt:
+            return
 
 
 @app.command("qr")

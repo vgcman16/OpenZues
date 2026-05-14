@@ -8157,6 +8157,55 @@ def test_logs_plain_truncation_notice_includes_max_bytes_hint(
     assert "Log tail truncated (increase --max-bytes)." in result.stderr
 
 
+def test_logs_follow_reuses_cursor_and_prints_file_header_once(monkeypatch) -> None:
+    cursors: list[int | None] = []
+    sleep_calls = 0
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace())
+
+    async def fake_build_logs_tail_payload(
+        services,
+        *,
+        cursor: int | None,
+        limit: int,
+        max_bytes: int,
+    ) -> dict[str, object]:
+        _ = services, limit, max_bytes
+        cursors.append(cursor)
+        return {
+            "file": "C:/tmp/openzues.log",
+            "cursor": 11 if cursor is None else 22,
+            "size": 11 if cursor is None else 22,
+            "lines": ["first poll" if cursor is None else "second poll"],
+            "truncated": False,
+            "reset": False,
+        }
+
+    def fake_sleep(seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        assert seconds == 0.001
+        if sleep_calls >= 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_logs_tail_payload",
+        fake_build_logs_tail_payload,
+    )
+    monkeypatch.setattr(cli_module.time, "sleep", fake_sleep)
+
+    result = runner.invoke(app, ["logs", "--follow", "--interval", "1", "--plain"])
+
+    assert result.exit_code == 0, result.stdout
+    assert cursors == [None, 11]
+    assert result.stdout.count("Log file: C:/tmp/openzues.log") == 1
+    assert "first poll" in result.stdout
+    assert "second poll" in result.stdout
+
+
 def test_sandbox_list_json_returns_openclaw_shaped_inventory(monkeypatch) -> None:
     class FakeDatabase:
         async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
