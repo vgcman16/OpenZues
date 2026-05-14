@@ -64513,6 +64513,10 @@ function assertNoImportTimeSideEffects(params = {}) {
   );
 }
 
+const testHelpersImportSideEffectsRuntime = {
+  assertNoImportTimeSideEffects,
+};
+
 function createPluginRecord(overrides = {}) {
   const id = String(overrides.id || "test-plugin");
   return {
@@ -93809,6 +93813,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/test-helpers/pairing-reply"
   ) {
     return testHelpersPairingReplyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/test-helpers/import-side-effects" ||
+    request === "@openclaw/plugin-sdk/test-helpers/import-side-effects"
+  ) {
+    return testHelpersImportSideEffectsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/plugin-test-api" ||

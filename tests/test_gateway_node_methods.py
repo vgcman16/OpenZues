@@ -79479,6 +79479,121 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_test_helpers_import_side_effects(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-test-helpers-import-side-effects.cjs"
+    runtime_entry.write_text(
+        """
+const sideEffects = require("openclaw/plugin-sdk/test-helpers/import-side-effects");
+const scopedSideEffects =
+  require("@openclaw/plugin-sdk/test-helpers/import-side-effects");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.test_helpers_import_side_effects",
+      description: "Use OpenClaw test-helpers/import-side-effects SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        sideEffects.assertNoImportTimeSideEffects({
+          moduleId: "demo",
+          forbiddenSeam: "network",
+          calls: [],
+          why: "imports must stay pure",
+          fixHint: "move work into register()"
+        });
+        let errorMessage = "";
+        try {
+          sideEffects.assertNoImportTimeSideEffects({
+            moduleId: "demo",
+            forbiddenSeam: "network",
+            calls: [["fetch", "https://example.test"]],
+            why: "why this is banned",
+            fixHint: "expected fix"
+          });
+        } catch (error) {
+          errorMessage = error.message;
+        }
+        return {
+          keys: Object.keys(sideEffects).sort(),
+          scopedSame:
+            scopedSideEffects.assertNoImportTimeSideEffects ===
+            sideEffects.assertNoImportTimeSideEffects,
+          errorMessage
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-test-helpers-import-side-effects-plugin",
+                    "name": "Runtime Test Helpers Import Side Effects Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-test-helpers-import-side-effects.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.test_helpers_import_side_effects"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.test_helpers_import_side_effects"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == ["assertNoImportTimeSideEffects"]
+    assert payload["result"]["scopedSame"] is True
+    assert (
+        "[runtime contract] demo touched network during module import."
+        in payload["result"]["errorMessage"]
+    )
+    assert "why this is banned" in payload["result"]["errorMessage"]
+    assert "expected fix" in payload["result"]["errorMessage"]
+    assert "observed calls (1):" in payload["result"]["errorMessage"]
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_web_media_helpers(
     tmp_path,
 ) -> None:
