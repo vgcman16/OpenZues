@@ -187,14 +187,14 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~11.1% after QR
+- The packaging/companion app breadth family is estimated at ~11.2% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
   gateway dispatch, remote device mutation dispatch, configured remote URL
   defaults, loopback pairing-required fallback, approval-state preview
   metadata, device-pair timestamp/supersession/interactive-visibility
   parity, device-bootstrap profile/token lookup, revoke, clear, verify, bound
-  profile, redeem, restore, and public-key normalization helpers,
+  profile, redeem, restore, public-key normalization, and TTL pruning helpers,
   device token scope-preserving rotation, approved-role device token
   rotation gates, approved-scope device token rotation baselines, requested
   operator-scope pairing approval gates, inherited-scope rotation caller gates,
@@ -13422,3 +13422,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, and packaging/companion breadth moves to ~11.1%.
   Continue companion-app device flows, packaging/distribution, ACP lifecycle,
   provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native device bootstrap token loading now
+  prunes expired legacy records by `ts`/`issuedAtMs` plus the OpenClaw bootstrap
+  TTL even when no local `expiresAtMs` field is present. Source/test
+  checkpointed in `758f6299`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~11.2%. Continue companion-app
+  device flows, packaging/distribution, ACP lifecycle, provider action breadth,
+  or setup/onboarding gaps.
