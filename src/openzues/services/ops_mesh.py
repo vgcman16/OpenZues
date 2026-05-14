@@ -13161,6 +13161,10 @@ _DIRECT_CHANNEL_AUDIO_AS_VOICE_RE = re.compile(
     r"\[\[\s*audio_as_voice\s*\]\]",
     re.IGNORECASE,
 )
+_DIRECT_CHANNEL_REPLY_TO_RE = re.compile(
+    r"\[\[\s*reply_to\s*:\s*([^\]\n]+)\s*\]\]",
+    re.IGNORECASE,
+)
 
 
 def _strip_direct_channel_audio_directive(message: str) -> tuple[str, bool]:
@@ -13171,7 +13175,26 @@ def _strip_direct_channel_audio_directive(message: str) -> tuple[str, bool]:
     return "\n".join(normalized_lines).strip(), True
 
 
-def _split_direct_channel_media_directives(message: str) -> tuple[str, list[str], bool]:
+def _strip_direct_channel_reply_directive(message: str) -> tuple[str, str | None]:
+    reply_to_id: str | None = None
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal reply_to_id
+        candidate = match.group(1).strip()
+        if candidate:
+            reply_to_id = candidate
+        return " "
+
+    if _DIRECT_CHANNEL_REPLY_TO_RE.search(message) is None:
+        return message, None
+    cleaned = _DIRECT_CHANNEL_REPLY_TO_RE.sub(replace, message)
+    normalized_lines = [" ".join(line.split()) for line in cleaned.splitlines()]
+    return "\n".join(normalized_lines).strip(), reply_to_id
+
+
+def _split_direct_channel_media_directives(
+    message: str,
+) -> tuple[str, list[str], bool, str | None]:
     kept_lines: list[str] = []
     media_urls: list[str] = []
     for line in str(message or "").splitlines():
@@ -13198,7 +13221,10 @@ def _split_direct_channel_media_directives(message: str) -> tuple[str, list[str]
     text_without_audio, audio_as_voice = _strip_direct_channel_audio_directive(
         text_without_media
     )
-    return text_without_audio, media_urls, audio_as_voice
+    text_without_reply, reply_to_id = _strip_direct_channel_reply_directive(
+        text_without_audio
+    )
+    return text_without_reply, media_urls, audio_as_voice, reply_to_id
 
 
 def _normalize_gateway_client_scopes(value: object) -> tuple[str, ...]:
@@ -31672,6 +31698,7 @@ class OpsMeshService:
             message_without_media_directives,
             directive_media_urls,
             directive_audio_as_voice,
+            directive_reply_to_id,
         ) = _split_direct_channel_media_directives(message)
         combined_media_urls = list(media_urls or [])
         combined_media_urls.extend(directive_media_urls)
@@ -31741,7 +31768,7 @@ class OpsMeshService:
             payload["flexMessage"] = normalized_flex_message
         if normalized_template_message is not None:
             payload["templateMessage"] = normalized_template_message
-        normalized_reply_to_id = str(reply_to_id or "").strip() or None
+        normalized_reply_to_id = str(reply_to_id or "").strip() or directive_reply_to_id
         if normalized_reply_to_id is not None:
             payload["replyToId"] = normalized_reply_to_id
             normalized_reply_to_id_source = (
