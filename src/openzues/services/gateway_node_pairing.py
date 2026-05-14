@@ -115,11 +115,10 @@ class GatewayNodePairingService:
         existing_request = (
             _request_from_row(existing_row) if existing_row is not None else None
         )
+        original_existing_request = existing_request
         public_key_was_provided = public_key is not None
         normalized_public_key = _public_key(public_key)
-        persisted_silent: bool | None
         if existing_request is None:
-            persisted_silent = True if silent is True else None
             resolved_public_key = normalized_public_key
             resolved_display_name = display_name
             resolved_platform = platform
@@ -134,7 +133,6 @@ class GatewayNodePairingService:
             resolved_scopes = _string_list(scopes)
             resolved_remote_ip = remote_ip
         else:
-            persisted_silent = bool(existing_request.silent) and bool(silent)
             resolved_public_key = (
                 normalized_public_key
                 if public_key_was_provided
@@ -180,12 +178,33 @@ class GatewayNodePairingService:
             resolved_remote_ip = (
                 remote_ip if remote_ip is not None else existing_request.remote_ip
             )
-            if silent is None:
-                persisted_silent = existing_request.silent
-            elif silent:
-                persisted_silent = True
-            else:
-                persisted_silent = None
+        same_approval_snapshot = (
+            existing_request is not None
+            and _same_pairing_approval_snapshot(
+                existing_request,
+                public_key=resolved_public_key,
+                roles=resolved_roles,
+                scopes=resolved_scopes,
+            )
+        )
+        if existing_request is not None and not same_approval_snapshot:
+            resolved_roles = _dedupe_scopes([*existing_request.roles, *resolved_roles])
+            resolved_scopes = _dedupe_scopes([*existing_request.scopes, *resolved_scopes])
+            await self.database.delete_gateway_node_pairing_request(
+                existing_request.request_id
+            )
+            existing_request = None
+        if original_existing_request is None:
+            persisted_silent = silent
+        elif same_approval_snapshot:
+            persisted_silent = bool(original_existing_request.silent and silent)
+        else:
+            persisted_silent = bool(silent and original_existing_request.silent is True)
+        requested_at_ms = (
+            existing_request.ts
+            if same_approval_snapshot and existing_request is not None
+            else now_ms
+        )
 
         row, created = await self.database.upsert_gateway_node_pairing_request(
             request_id=str(uuid4()),
@@ -203,7 +222,7 @@ class GatewayNodePairingService:
             scopes=resolved_scopes,
             remote_ip=resolved_remote_ip,
             silent=persisted_silent,
-            requested_at_ms=now_ms,
+            requested_at_ms=requested_at_ms,
             public_key=resolved_public_key,
         )
         request = _request_from_row(row)
@@ -663,7 +682,8 @@ class GatewayNodePairingService:
 
 
 def _request_from_row(row: dict[str, object]) -> GatewayNodePairingRequest:
-    silent = bool(row["silent"]) if row.get("silent") else None
+    silent_explicit = bool(row.get("silent_explicit")) or bool(row.get("silent"))
+    silent = bool(row["silent"]) if silent_explicit else None
     return GatewayNodePairingRequest(
         request_id=str(row["request_id"]),
         node_id=str(row["node_id"]),
@@ -969,6 +989,20 @@ def _role_scoped_token_scopes(role: str, scopes: list[str]) -> list[str]:
         for scope in normalized_scopes
         if not scope.startswith(_OPERATOR_SCOPE_PREFIX)
     ]
+
+
+def _same_pairing_approval_snapshot(
+    request: GatewayNodePairingRequest,
+    *,
+    public_key: str | None,
+    roles: list[str],
+    scopes: list[str],
+) -> bool:
+    return (
+        request.public_key == public_key
+        and set(request.roles) == set(_dedupe_scopes(roles))
+        and set(request.scopes) == set(_dedupe_scopes(scopes))
+    )
 
 
 def _role_scopes_allow(

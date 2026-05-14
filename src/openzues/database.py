@@ -261,6 +261,7 @@ class Database:
                     scopes_json TEXT NOT NULL DEFAULT '[]',
                     remote_ip TEXT,
                     silent INTEGER NOT NULL DEFAULT 0,
+                    silent_explicit INTEGER NOT NULL DEFAULT 0,
                     requested_at_ms INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -696,6 +697,12 @@ class Database:
                 "TEXT NOT NULL DEFAULT '[]'",
             )
             await self._ensure_column(db, "gateway_node_pairing_requests", "public_key", "TEXT")
+            await self._ensure_column(
+                db,
+                "gateway_node_pairing_requests",
+                "silent_explicit",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
             await self._ensure_column(db, "gateway_node_paired_nodes", "public_key", "TEXT")
             await self._ensure_column(db, "control_chat_messages", "session_key", "TEXT")
             await self._ensure_column(db, "control_chat_messages", "model_provider", "TEXT")
@@ -859,6 +866,7 @@ class Database:
             "scopes": Database._decode_json_list(payload.get("scopes_json")),
             "remote_ip": payload["remote_ip"],
             "silent": bool(payload["silent"]),
+            "silent_explicit": bool(payload.get("silent_explicit")) or bool(payload["silent"]),
             "requested_at_ms": int(payload["requested_at_ms"]),
             "created_at": payload["created_at"],
             "updated_at": payload["updated_at"],
@@ -912,6 +920,7 @@ class Database:
         commands_json = json.dumps(list(commands))
         roles_json = json.dumps(list(roles))
         scopes_json = json.dumps(list(scopes))
+        silent_explicit = silent is not None
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             existing_cursor = await db.execute(
@@ -947,11 +956,12 @@ class Database:
                         scopes_json,
                         remote_ip,
                         silent,
+                        silent_explicit,
                         requested_at_ms,
                         created_at,
                         updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         persisted_request_id,
@@ -970,6 +980,7 @@ class Database:
                         scopes_json,
                         remote_ip,
                         int(bool(silent)),
+                        int(silent_explicit),
                         requested_at_ms,
                         now,
                         now,
@@ -993,6 +1004,7 @@ class Database:
                         scopes_json = ?,
                         remote_ip = ?,
                         silent = ?,
+                        silent_explicit = ?,
                         requested_at_ms = ?,
                         updated_at = ?
                     WHERE request_id = ?
@@ -1012,6 +1024,7 @@ class Database:
                         scopes_json,
                         remote_ip,
                         int(bool(silent)),
+                        int(silent_explicit),
                         requested_at_ms,
                         now,
                         persisted_request_id,

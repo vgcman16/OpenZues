@@ -21,12 +21,12 @@ may lag behind this tracker.
 | Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.999999% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Matrix implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot structured self-closing media tags, QQBot reply message sequencing, QQBot local media file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot file-media text follow-up delivery, QQBot direct image/video media text follow-up delivery, QQBot inline media text ordering/result metadata, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.99999992% | High for bounded native bridge | ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
+| Runtime/CLI/doctor native bridge | ~99.99999995% | High for bounded native bridge | ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, top-level logs CLI tail/local-time formatting/truncation hint, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
-| Packaging/companion app breadth | ~9.9% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, Zalo/plugin-SDK profile-aware pairing approval commands, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR SecretRef-template inference, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, and QR local token SecretRef resolution are landed; companion apps remain mostly open |
+| Packaging/companion app breadth | ~11.3% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, Zalo/plugin-SDK profile-aware pairing approval commands, pending device-pair queue timestamp stability, changed approval-snapshot supersession, interactive supersession visibility, bootstrap profile bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope warnings, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR SecretRef-template inference, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, and QR local token SecretRef resolution are landed; companion apps remain mostly open |
 
-Latest verified adjustment: `OZ-COMP-001BJ` plugin SDK profile-aware pairing
-approval commands move packaging/companion breadth to ~9.9%; repo-wide OpenClaw
+Latest verified adjustment: `OZ-PKG-001DG` logs CLI truncation hint moves
+runtime/CLI/doctor native-bridge parity to ~99.99999995%; repo-wide OpenClaw
 parity remains estimated at ~99.9%.
 
 ## Implemented / Locked Bounded Areas
@@ -3606,6 +3606,61 @@ parity remains estimated at ~99.9%.
     (`3 passed, 621 deselected`), `ruff check src\openzues\cli.py
     tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
     --check`.
+
+- [x] `OZ-PKG-001DE` Top-level logs CLI tail.
+  - Source: `openclaw-main/src/cli/logs-cli.ts`,
+    `openclaw-main/src/cli/logs-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues logs --json` reads the configured gateway log tail,
+    supports `--limit`, `--max-bytes`, and `--cursor`, and returns
+    OpenClaw-style `file`, `cursor`, `size`, `lines`, `truncated`, and `reset`
+    fields while preserving a human log-tail view.
+  - Evidence required: focused logs CLI proof, adjacent logs CLI proof, ruff,
+    mypy
+  - Status: checkpointed in `8ce8d4aa`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_logs_json_reads_gateway_log_tail -q`
+    (`1 failed` before implementation because the command was absent, then `1
+    passed`), adjacent logs proof (`2 passed, 650 deselected`), ruff, mypy,
+    and focused `git diff --check`.
+
+- [x] `OZ-PKG-001DF` Logs CLI local-time formatting.
+  - Source: `openclaw-main/src/cli/logs-cli.ts`,
+    `openclaw-main/src/cli/logs-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues logs --plain --local-time` parses structured gateway
+    log lines and renders timestamps in local time without a trailing `Z`,
+    while preserving the message text.
+  - Evidence required: focused local-time logs proof, adjacent logs CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `3970985d`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_logs_plain_local_time_formats_structured_log_lines -q`
+    (`1 failed` before implementation because `--local-time` was unsupported,
+    then `1 passed`), adjacent logs proof (`3 passed, 650 deselected`), ruff,
+    mypy, and focused `git diff --check`.
+
+- [x] `OZ-PKG-001DG` Logs CLI truncation hint.
+  - Source: `openclaw-main/src/cli/logs-cli.ts`,
+    `openclaw-main/src/cli/logs-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues logs --plain` emits the OpenClaw-shaped truncation
+    notice `Log tail truncated (increase --max-bytes).` when the gateway log
+    tail is clipped by `--max-bytes`.
+  - Evidence required: focused truncation-notice logs proof, adjacent logs CLI
+    proof, ruff, mypy
+  - Status: checkpointed in `d9a631f6`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_logs_plain_truncation_notice_includes_max_bytes_hint -q`
+    (`1 failed` before implementation because the hint was missing, then `1
+    passed`), adjacent logs proof (`4 passed, 650 deselected`), ruff, mypy,
+    and focused `git diff --check`.
 
 - [ ] Runtime-control hard gaps.
   - Source: broader OpenClaw runtime/client integration and session runtime
@@ -11785,6 +11840,281 @@ parity remains estimated at ~99.9%.
     `python -m pytest tests\test_gateway_node_methods.py -q -k "pairing_reply or conversation_binding_runtime_helpers"`
     (`3 passed, 1300 deselected`), ruff, mypy, and focused
     `git diff --check`.
+
+- [x] `OZ-COMP-001BK` Pending device-pair queue timestamp stability.
+  - Source: `openclaw-main/src/infra/device-pairing.ts`,
+    `openclaw-main/src/infra/device-pairing.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `tests/test_gateway_node_pairing_refresh.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: same-device reconnects with the same public-key/role/scope
+    approval snapshot refresh metadata without changing the original pending
+    timestamp used by implicit latest approval selection.
+  - Evidence required: focused queue-stability proof, adjacent pairing refresh
+    proof, adjacent gateway method pairing proof, ruff, mypy
+  - Status: checkpointed in `04a23607`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py::test_pair_request_same_approval_snapshot_preserves_original_ts -q`
+    (`1 failed` before implementation because `ts` refreshed to `2000`, then
+    `1 passed`), adjacent refresh proof (`7 passed`), adjacent gateway method
+    proof (`14 passed, 1289 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] `OZ-COMP-001BL` Changed approval-snapshot device-pair supersession.
+  - Source: `openclaw-main/src/infra/device-pairing.ts`,
+    `openclaw-main/src/infra/device-pairing.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `tests/test_gateway_node_pairing_refresh.py`
+  - Contract: when a same-device pending request changes role/scope approval
+    requirements, the stale pending row is removed and a new request id is
+    created with merged prior and incoming approval requirements.
+  - Evidence required: focused supersession proof, adjacent pairing refresh
+    proof, adjacent gateway method pairing proof, ruff, mypy
+  - Status: checkpointed in `ac3d1821`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py::test_pair_request_changed_roles_or_scopes_supersedes_pending_request -q`
+    (`1 failed` before implementation because the old request was mutated with
+    `created=False`, then `1 passed`), adjacent refresh proof (`8 passed`),
+    adjacent gateway method proof (`14 passed, 1289 deselected`), ruff, mypy,
+    and focused `git diff --check`.
+
+- [x] `OZ-COMP-001BM` Interactive superseded device-pair visibility.
+  - Source: `openclaw-main/src/infra/device-pairing.ts`,
+    `openclaw-main/src/infra/device-pairing.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `src/openzues/database.py`, `tests/test_gateway_node_pairing_refresh.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: explicit interactive pending requests keep `silent: false`
+    through same-device supersession; SQLite distinguishes omitted `silent`
+    from explicit false while preserving legacy true rows.
+  - Evidence required: focused interactive supersession proof, adjacent
+    pairing refresh proof, adjacent gateway method pairing proof, ruff, mypy
+  - Status: checkpointed in `fd385434`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_pairing_refresh.py::test_pair_request_supersession_preserves_interactive_silent_false -q`
+    (`1 failed` before implementation because `silent` was omitted, then `1
+    passed`), adjacent refresh proof (`9 passed`), adjacent gateway method
+    proof (`14 passed, 1289 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] `OZ-COMP-001BN` Bounded issued device-bootstrap profiles.
+  - Source: `openclaw-main/src/infra/device-bootstrap.ts`,
+    `openclaw-main/src/infra/device-bootstrap.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/device_bootstrap_profile.py`,
+    `src/openzues/services/device_bootstrap_tokens.py`,
+    `tests/test_device_bootstrap_tokens.py`
+  - Contract: explicit bootstrap profiles passed to token issuance are
+    normalized and bounded to the OpenClaw handoff allowlist before persistence
+    in `devices/bootstrap.json`.
+  - Evidence required: focused token profile proof, adjacent token proof,
+    adjacent QR CLI proof, ruff, mypy
+  - Status: checkpointed in `e32b69c0`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_device_bootstrap_tokens.py::test_issue_device_bootstrap_token_bounds_explicit_profile_to_handoff_scopes -q`
+    (`1 failed` before implementation because `profile` was unsupported, then
+    `1 passed`), adjacent token proof (`1 passed`), adjacent QR CLI proof (`35
+    passed, 616 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001BO` Device-bootstrap token profile lookup.
+  - Source: `openclaw-main/src/infra/device-bootstrap.ts`,
+    `openclaw-main/src/infra/device-bootstrap.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/device_bootstrap_tokens.py`,
+    `tests/test_device_bootstrap_tokens.py`
+  - Contract: a valid trimmed bootstrap token returns its normalized persisted
+    bootstrap profile; missing, blank, expired, or unknown tokens return
+    `None`.
+  - Evidence required: focused profile lookup proof, adjacent token proof,
+    adjacent QR CLI proof, ruff, mypy
+  - Status: checkpointed in `31a935c6`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_device_bootstrap_tokens.py::test_get_device_bootstrap_token_profile_loads_valid_trimmed_token -q`
+    (`1 error` before implementation because the helper was absent, then `1
+    passed`), adjacent token proof (`2 passed`), adjacent QR CLI proof (`35
+    passed, 616 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001BP` Device-bootstrap token revocation.
+  - Source: `openclaw-main/src/infra/device-bootstrap.ts`,
+    `openclaw-main/src/infra/device-bootstrap.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/device_bootstrap_tokens.py`,
+    `tests/test_device_bootstrap_tokens.py`
+  - Contract: a valid trimmed bootstrap token is removed from
+    `devices/bootstrap.json` and returns its removed record; unknown tokens
+    return `{ "removed": false }`.
+  - Evidence required: focused revoke proof, adjacent token proof, adjacent QR
+    CLI proof, ruff, mypy
+  - Status: checkpointed in `363ce2d3`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_device_bootstrap_tokens.py::test_revoke_device_bootstrap_token_removes_specific_trimmed_token -q`
+    (`1 error` before implementation because the helper was absent, then `1
+    passed`), adjacent token proof (`3 passed`), adjacent QR CLI proof (`35
+    passed, 616 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001BQ` Device-bootstrap token clearing.
+  - Source: `openclaw-main/src/infra/device-bootstrap.ts`,
+    `openclaw-main/src/infra/device-bootstrap.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/device_bootstrap_tokens.py`,
+    `tests/test_device_bootstrap_tokens.py`
+  - Contract: clearing bootstrap tokens removes every outstanding non-expired
+    token from `devices/bootstrap.json` and returns the removed count.
+  - Evidence required: focused clear proof, adjacent token proof, adjacent QR
+    CLI proof, ruff, mypy
+  - Status: checkpointed in `19c8b75c`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_device_bootstrap_tokens.py::test_clear_device_bootstrap_tokens_removes_outstanding_tokens -q`
+    (`1 error` before implementation because the helper was absent, then `1
+    passed`), adjacent token proof (`4 passed`), adjacent QR CLI proof (`35
+    passed, 616 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001BR` Device-bootstrap token verification and binding.
+  - Source: `openclaw-main/src/infra/device-bootstrap.ts`,
+    `openclaw-main/src/infra/device-bootstrap.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/device_bootstrap_tokens.py`,
+    `tests/test_device_bootstrap_tokens.py`
+  - Contract: verifying a bootstrap token fails closed for blank or
+    out-of-profile requests, binds to the first device id/public key, allows
+    same-identity reuse, and rejects other device identities.
+  - Evidence required: focused verify proof, adjacent token proof, adjacent QR
+    CLI proof, ruff, mypy
+  - Status: checkpointed in `2a1f2724`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_device_bootstrap_tokens.py::test_verify_device_bootstrap_token_binds_first_device_identity -q`
+    (`1 error` before implementation because the helper was absent, then `1
+    passed`), adjacent token proof (`5 passed`), adjacent QR CLI proof (`35
+    passed, 616 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001BS` Bound device-bootstrap profile lookup.
+  - Source: `openclaw-main/src/infra/device-bootstrap.ts`,
+    `openclaw-main/src/infra/device-bootstrap.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/device_bootstrap_tokens.py`,
+    `tests/test_device_bootstrap_tokens.py`
+  - Contract: after verification, a bootstrap profile is returned only for
+    the same token/device id/public key tuple; unbound or mismatched identities
+    return `None`.
+  - Evidence required: focused bound-profile proof, adjacent token proof,
+    adjacent QR CLI proof, ruff, mypy
+  - Status: checkpointed in `8e3c7279`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_device_bootstrap_tokens.py::test_get_bound_device_bootstrap_profile_requires_verified_identity -q`
+    (`1 error` before implementation because the helper was absent, then `1
+    passed`), adjacent token proof (`6 passed`), adjacent QR CLI proof (`35
+    passed, 616 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001BT` Device-bootstrap redemption state.
+  - Source: `openclaw-main/src/infra/device-bootstrap.ts`,
+    `openclaw-main/src/infra/device-bootstrap.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/device_bootstrap_tokens.py`,
+    `tests/test_device_bootstrap_tokens.py`
+  - Contract: bootstrap token redemption records redeemed roles and handoff
+    scopes, persists `redeemedProfile`, and reports when the issued profile has
+    been fully redeemed.
+  - Evidence required: focused redemption proof, adjacent token proof,
+    adjacent QR CLI proof, ruff, mypy
+  - Status: checkpointed in `dd4660fe`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_device_bootstrap_tokens.py::test_redeem_device_bootstrap_token_profile_persists_progress -q`
+    (`1 error` before implementation because the helper was absent, then `1
+    passed`), adjacent token proof (`7 passed`), adjacent QR CLI proof (`35
+    passed, 616 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001BU` Device-bootstrap token restore.
+  - Source: `openclaw-main/src/infra/device-bootstrap.ts`,
+    `openclaw-main/src/infra/device-bootstrap.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/device_bootstrap_tokens.py`,
+    `tests/test_device_bootstrap_tokens.py`
+  - Contract: a revoked token record can be restored under its token key for
+    delivery/send-failure recovery.
+  - Evidence required: focused restore proof, adjacent token proof, adjacent QR
+    CLI proof, ruff, mypy
+  - Status: checkpointed in `ee419c3a`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_device_bootstrap_tokens.py::test_restore_device_bootstrap_token_reinstates_revoked_record -q`
+    (`1 error` before implementation because the helper was absent, then `1
+    passed`), adjacent token proof (`8 passed`), adjacent QR CLI proof (`35
+    passed, 616 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001BV` Device-bootstrap public-key normalization.
+  - Source: `openclaw-main/src/infra/device-bootstrap.ts`,
+    `openclaw-main/src/infra/device-bootstrap.test.ts`,
+    `openclaw-main/src/infra/device-identity.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/device_bootstrap_tokens.py`,
+    `tests/test_device_bootstrap_tokens.py`
+  - Contract: bootstrap verification and bound-profile lookup normalize PEM,
+    standard base64, and base64url public-key inputs before persistence and
+    comparison, preserving same-device verification across equivalent key
+    encodings.
+  - Evidence required: focused public-key normalization proof, adjacent token
+    proof, adjacent QR CLI proof, ruff, mypy
+  - Status: checkpointed in `767e3045`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_device_bootstrap_tokens.py::test_verify_device_bootstrap_token_accepts_equivalent_public_key_encodings -q`
+    (`1 failed` before implementation because the raw key was rejected after
+    PEM binding, then `1 passed`), adjacent token proof (`9 passed`), adjacent
+    QR CLI proof (`35 passed, 616 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] `OZ-COMP-001BW` Device-bootstrap TTL pruning.
+  - Source: `openclaw-main/src/infra/device-bootstrap.ts`,
+    `openclaw-main/src/infra/device-bootstrap.test.ts`,
+    `openclaw-main/src/infra/pairing-files.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/device_bootstrap_tokens.py`,
+    `tests/test_device_bootstrap_tokens.py`
+  - Contract: bootstrap state loading prunes expired records by `ts` or
+    `issuedAtMs` plus the bootstrap TTL even when `expiresAtMs` is absent, so
+    valid-profile legacy records cannot verify after expiry.
+  - Evidence required: focused TTL-pruning proof, adjacent token proof,
+    adjacent QR CLI proof, ruff, mypy
+  - Status: checkpointed in `758f6299`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_device_bootstrap_tokens.py::test_verify_device_bootstrap_token_rejects_expired_legacy_ts_record -q`
+    (`1 failed` before implementation because the expired record verified,
+    then `1 passed`), adjacent token proof (`10 passed`), adjacent QR CLI
+    proof (`35 passed, 616 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] `OZ-COMP-001BX` Device-bootstrap stripped-scope warnings.
+  - Source: `openclaw-main/src/infra/device-bootstrap.ts`,
+    `openclaw-main/src/infra/device-bootstrap.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/device_bootstrap_tokens.py`,
+    `tests/test_device_bootstrap_tokens.py`
+  - Contract: explicit issued bootstrap profiles that request scopes outside
+    the handoff allowlist emit `bootstrap_token_scopes_stripped` with
+    requested, retained, and stripped scope context.
+  - Evidence required: focused stripped-scope warning proof, adjacent token
+    proof, adjacent QR CLI proof, ruff, mypy
+  - Status: checkpointed in `3e7d87c0`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_device_bootstrap_tokens.py::test_issue_device_bootstrap_token_logs_stripped_overbroad_scopes -q`
+    (`1 failed` before implementation because no warning was emitted, then `1
+    passed`), adjacent token proof (`11 passed`), adjacent QR CLI proof (`35
+    passed, 616 deselected`), ruff, mypy, and focused `git diff --check`.
 
 ## Update Rule
 

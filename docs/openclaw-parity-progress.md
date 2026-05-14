@@ -2,13 +2,13 @@
 
 ## Snapshot
 
-- Updated: 2026-05-12.
+- Updated: 2026-05-14.
 - Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999999999999999%.
 - Estimated active gateway/session/tool-contract family parity: ~99.969% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~99.987% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `artifacts.list` / `artifacts.get` / `artifacts.download`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.995%;
   it is no longer the active queue head.
-- Estimated packaging/companion app breadth: ~9.9% after QR setup-code
+- Estimated packaging/companion app breadth: ~11.3% after QR setup-code
   safety/SecretRef slices, local QR token/password SecretRef resolution,
   SecretRef-template inference, explicit-auth hard-requirement, and
   auth-before-URL ordering parity,
@@ -17,10 +17,15 @@
   list/approve/mutation coverage, approve preview gateway/auth flag
   preservation, remote device dispatch, configured remote defaults, loopback
   pairing-required fallback, approval-state preview metadata, terminal QR
-  rendering, Zalo/plugin-SDK profile-aware pairing approval commands, and
-  device-token scope/caller/visibility/disconnect guards; companion apps
-  remain broadly open.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.99999992% after the runtime bridge doctor posture, native ACP client interactive replay, ACP persisted task-record child-cap counting, ACP `streamTo="parent"` requester-context preflight, ACP `resumeSessionId` requester-context preflight, ACP `resumeSessionId` ownership enforcement, ACP model/thinking override propagation, ACP configured runtime agent alias mapping, ACP runtime-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP thread-binding dispatch-failure cleanup, ACP accepted-spawn registration-failure cleanup, Docker runtime home bootstrap, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, native Zalo pairing list/approve/notify CLI, command-owner bootstrap, list default, bootstrap explanation, not-found error text, and disabled-account capability action gating, package-update downgrade confirmation, stored-channel package update dispatch, package-update post-core resume mode, package-update post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback, startup-optimization doctor notes, installed runtime session/control-UI contribution capture, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch/unhealthy-snapshot restart-health failure with restart-log/status follow-up diagnostics, gateway health `serverVersion` projection, `gateway status --deep` CLI alias coverage, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect human typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, deeper ACP bridge lifecycle edge cases, deeper installed plugin module import/activation, and broader runtime command ergonomics.
+  rendering, Zalo/plugin-SDK profile-aware pairing approval commands, pending
+  device-pair queue timestamp stability, changed approval-snapshot
+  supersession, interactive supersession visibility, bootstrap profile
+  bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear
+  helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope
+  warnings, and device-token
+  scope/caller/visibility/disconnect guards; companion apps remain broadly
+  open.
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.99999995% after the runtime bridge doctor posture, native ACP client interactive replay, ACP persisted task-record child-cap counting, ACP `streamTo="parent"` requester-context preflight, ACP `resumeSessionId` requester-context preflight, ACP `resumeSessionId` ownership enforcement, ACP model/thinking override propagation, ACP configured runtime agent alias mapping, ACP runtime-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP thread-binding dispatch-failure cleanup, ACP accepted-spawn registration-failure cleanup, Docker runtime home bootstrap, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, top-level logs CLI tail/local-time formatting/truncation hint, native Zalo pairing list/approve/notify CLI, command-owner bootstrap, list default, bootstrap explanation, not-found error text, and disabled-account capability action gating, package-update downgrade confirmation, stored-channel package update dispatch, package-update post-core resume mode, package-update post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback, startup-optimization doctor notes, installed runtime session/control-UI contribution capture, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch/unhealthy-snapshot restart-health failure with restart-log/status follow-up diagnostics, gateway health `serverVersion` projection, `gateway status --deep` CLI alias coverage, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect human typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, deeper ACP bridge lifecycle edge cases, deeper installed plugin module import/activation, and broader runtime command ergonomics.
 - Estimated provider-native inbound/outbound breadth: ~99.999999% after Slack
   event/interactions/slash/signing coverage, command aliases/plugin command
   injection, WhatsApp reply fanout, Telegram media reply fanout/caption
@@ -18513,7 +18518,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   processing, and owner `unblock ~ship` admin commands mutate the blocked list
   without entering a work session. This closes `OZ-PROV-001DL`; repo-wide
   parity remained estimated at ~99.9%, with the evidence band tightened to
-  ~80-99.99999995%. At that checkpoint, remaining Tlon-specific breadth was
+  ~80-99.99999994%. At that checkpoint, remaining Tlon-specific breadth was
   production SSE monitor lifecycle.
 - Verified the Tlon block/admin slice with focused red/green proofs
   `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_blocks_tlon_pending_request_from_owner -q`,
@@ -25291,6 +25296,306 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`3 passed, 1300 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `d137a71f`.
+
+- Native device pairing requests now preserve the original pending request
+  timestamp when a reconnect carries the same public-key/role/scope approval
+  snapshot, matching OpenClaw's queue-stability guard and preventing implicit
+  `--latest` queue-jumping while still refreshing metadata such as display
+  name, remote IP, and silent visibility. This closes `OZ-COMP-001BK`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~10.0%.
+- Verified pending device-pair timestamp stability with focused red/green
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py::test_pair_request_same_approval_snapshot_preserves_original_ts -q`
+  (`1 failed` before implementation because `ts` refreshed to `2000`, then
+  `1 passed`), adjacent pairing refresh proof `python -m pytest
+  tests\test_gateway_node_pairing_refresh.py -q` (`7 passed`), adjacent
+  gateway node-method pairing proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "node_pair_request or device_pair"`
+  (`14 passed, 1289 deselected`), `ruff check
+  src\openzues\services\gateway_node_pairing.py
+  tests\test_gateway_node_pairing_refresh.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_pairing.py`, and focused `git diff
+  --check`. Source/test checkpointed in `04a23607`.
+
+- Native device pairing now supersedes a pending request when the same device
+  reconnects with changed role/scope approval requirements, merging the prior
+  and incoming roles/scopes into a fresh request id while dropping the stale
+  pending row. This matches OpenClaw's pending reconciliation behavior and
+  closes `OZ-COMP-001BL`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~10.1%.
+- Verified changed-approval-snapshot supersession with focused red/green
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py::test_pair_request_changed_roles_or_scopes_supersedes_pending_request -q`
+  (`1 failed` before implementation because the old request was mutated with
+  `created=False`, then `1 passed`), adjacent pairing refresh proof
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py -q` (`8
+  passed`), adjacent gateway node-method pairing proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "node_pair_request or device_pair"`
+  (`14 passed, 1289 deselected`), `ruff check
+  src\openzues\services\gateway_node_pairing.py
+  tests\test_gateway_node_pairing_refresh.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_pairing.py`, and focused `git diff
+  --check`. Source/test checkpointed in `ac3d1821`.
+
+- Native device pairing now preserves explicit interactive visibility through
+  superseded pending requests by storing `silent=false` distinctly from an
+  omitted `silent` flag and applying OpenClaw's "silent only if both requests
+  are silent" reconciliation rule for refreshes and replacements. This closes
+  `OZ-COMP-001BM`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~10.2%.
+- Verified interactive superseded pending request visibility with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_pairing_refresh.py::test_pair_request_supersession_preserves_interactive_silent_false -q`
+  (`1 failed` before implementation because `silent` was omitted, then `1
+  passed`), adjacent pairing refresh proof `python -m pytest
+  tests\test_gateway_node_pairing_refresh.py -q` (`9 passed`), adjacent
+  gateway node-method pairing proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "node_pair_request or device_pair"`
+  (`14 passed, 1289 deselected`), `ruff check
+  src\openzues\services\gateway_node_pairing.py src\openzues\database.py
+  tests\test_gateway_node_pairing_refresh.py tests\test_gateway_node_methods.py`,
+  `mypy src\openzues\services\gateway_node_pairing.py src\openzues\database.py`,
+  and focused `git diff --check`. Source/test checkpointed in `fd385434`.
+
+- Native device bootstrap token issuance now accepts explicit bootstrap
+  profiles and bounds them to the OpenClaw handoff allowlist before persisting
+  `devices/bootstrap.json`, stripping non-handoff node/operator scopes such as
+  `node.exec`, `operator.admin`, and `operator.pairing`. This closes
+  `OZ-COMP-001BN`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~10.3%.
+- Verified issued device-bootstrap profile bounding with focused red/green
+  `python -m pytest tests\test_device_bootstrap_tokens.py::test_issue_device_bootstrap_token_bounds_explicit_profile_to_handoff_scopes -q`
+  (`1 failed` before implementation because `profile` was unsupported, then
+  `1 passed`), adjacent token proof `python -m pytest
+  tests\test_device_bootstrap_tokens.py -q` (`1 passed`), adjacent QR CLI
+  proof `python -m pytest tests\test_cli.py -q -k "qr_"` (`35 passed, 616
+  deselected`), `ruff check src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py
+  tests\test_device_bootstrap_tokens.py`, `mypy
+  src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py`, and focused `git diff
+  --check`. Source/test checkpointed in `e32b69c0`.
+
+- Native device bootstrap token handling now loads the persisted profile for a
+  valid trimmed bootstrap token, normalizing `profile` or legacy top-level
+  role/scope records the way OpenClaw's `getDeviceBootstrapTokenProfile`
+  does. This closes `OZ-COMP-001BO`; repo-wide parity remains estimated at
+  ~99.9%, and packaging/companion breadth moves to ~10.4%.
+- Verified device-bootstrap token profile lookup with focused red/green
+  `python -m pytest tests\test_device_bootstrap_tokens.py::test_get_device_bootstrap_token_profile_loads_valid_trimmed_token -q`
+  (`1 error` before implementation because the function was absent, then `1
+  passed`), adjacent token proof `python -m pytest
+  tests\test_device_bootstrap_tokens.py -q` (`2 passed`), adjacent QR CLI
+  proof `python -m pytest tests\test_cli.py -q -k "qr_"` (`35 passed, 616
+  deselected`), `ruff check src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py
+  tests\test_device_bootstrap_tokens.py`, `mypy
+  src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py`, and focused `git diff
+  --check`. Source/test checkpointed in `31a935c6`.
+
+- Native device bootstrap tokens can now revoke one specific trimmed token,
+  remove it from `devices/bootstrap.json`, and return the removed record,
+  matching OpenClaw's `revokeDeviceBootstrapToken` behavior for token cleanup
+  and send-failure recovery paths. This closes `OZ-COMP-001BP`; repo-wide
+  parity remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~10.5%.
+- Verified device-bootstrap token revocation with focused red/green
+  `python -m pytest tests\test_device_bootstrap_tokens.py::test_revoke_device_bootstrap_token_removes_specific_trimmed_token -q`
+  (`1 error` before implementation because the helper was absent, then `1
+  passed`), adjacent token proof `python -m pytest
+  tests\test_device_bootstrap_tokens.py -q` (`3 passed`), adjacent QR CLI
+  proof `python -m pytest tests\test_cli.py -q -k "qr_"` (`35 passed, 616
+  deselected`), `ruff check src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py
+  tests\test_device_bootstrap_tokens.py`, `mypy
+  src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py`, and focused `git diff
+  --check`. Source/test checkpointed in `363ce2d3`.
+
+- Native device bootstrap token handling can now clear all outstanding
+  non-expired bootstrap tokens and return the removed count, matching
+  OpenClaw's `clearDeviceBootstrapTokens` cleanup behavior. This closes
+  `OZ-COMP-001BQ`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~10.6%.
+- Verified device-bootstrap token clearing with focused red/green
+  `python -m pytest tests\test_device_bootstrap_tokens.py::test_clear_device_bootstrap_tokens_removes_outstanding_tokens -q`
+  (`1 error` before implementation because the helper was absent, then `1
+  passed`), adjacent token proof `python -m pytest
+  tests\test_device_bootstrap_tokens.py -q` (`4 passed`), adjacent QR CLI
+  proof `python -m pytest tests\test_cli.py -q -k "qr_"` (`35 passed, 616
+  deselected`), `ruff check src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py
+  tests\test_device_bootstrap_tokens.py`, `mypy
+  src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py`, and focused `git diff
+  --check`. Source/test checkpointed in `19c8b75c`.
+
+- Native device bootstrap token handling now verifies a presented token,
+  rejects blank/out-of-profile identity requests, binds the token to the first
+  device id/public key, and permits same-identity reuse while rejecting another
+  device identity. This closes `OZ-COMP-001BR`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~10.7%.
+- Verified device-bootstrap token verification with focused red/green
+  `python -m pytest tests\test_device_bootstrap_tokens.py::test_verify_device_bootstrap_token_binds_first_device_identity -q`
+  (`1 error` before implementation because the helper was absent, then `1
+  passed`), adjacent token proof `python -m pytest
+  tests\test_device_bootstrap_tokens.py -q` (`5 passed`), adjacent QR CLI
+  proof `python -m pytest tests\test_cli.py -q -k "qr_"` (`35 passed, 616
+  deselected`), `ruff check src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py
+  tests\test_device_bootstrap_tokens.py`, `mypy
+  src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py`, and focused `git diff
+  --check`. Source/test checkpointed in `2a1f2724`.
+
+- Native device bootstrap token handling now returns the bound bootstrap
+  profile only after the same token/device/public-key tuple has verified,
+  matching OpenClaw's `getBoundDeviceBootstrapProfile` identity guard. This
+  closes `OZ-COMP-001BS`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~10.8%.
+- Verified bound device-bootstrap profile lookup with focused red/green
+  `python -m pytest tests\test_device_bootstrap_tokens.py::test_get_bound_device_bootstrap_profile_requires_verified_identity -q`
+  (`1 error` before implementation because the helper was absent, then `1
+  passed`), adjacent token proof `python -m pytest
+  tests\test_device_bootstrap_tokens.py -q` (`6 passed`), adjacent QR CLI
+  proof `python -m pytest tests\test_cli.py -q -k "qr_"` (`35 passed, 616
+  deselected`), `ruff check src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py
+  tests\test_device_bootstrap_tokens.py`, `mypy
+  src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py`, and focused `git diff
+  --check`. Source/test checkpointed in `8e3c7279`.
+
+- Native device bootstrap token handling now records redeemed bootstrap roles
+  and handoff scopes, persists `redeemedProfile`, and reports whether the
+  issued profile is fully redeemed, matching OpenClaw's
+  `redeemDeviceBootstrapTokenProfile`. This closes `OZ-COMP-001BT`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~10.9%.
+- Verified device-bootstrap redemption state with focused red/green
+  `python -m pytest tests\test_device_bootstrap_tokens.py::test_redeem_device_bootstrap_token_profile_persists_progress -q`
+  (`1 error` before implementation because the helper was absent, then `1
+  passed`), adjacent token proof `python -m pytest
+  tests\test_device_bootstrap_tokens.py -q` (`7 passed`), adjacent QR CLI
+  proof `python -m pytest tests\test_cli.py -q -k "qr_"` (`35 passed, 616
+  deselected`), `ruff check src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py
+  tests\test_device_bootstrap_tokens.py`, `mypy
+  src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py`, and focused `git diff
+  --check`. Source/test checkpointed in `dd4660fe`.
+
+- Native device bootstrap token handling can now restore a revoked token record
+  by token key, matching OpenClaw's send-failure recovery helper for QR/device
+  bootstrap delivery retries. This closes `OZ-COMP-001BU`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~11.0%.
+- Verified device-bootstrap token restore with focused red/green
+  `python -m pytest tests\test_device_bootstrap_tokens.py::test_restore_device_bootstrap_token_reinstates_revoked_record -q`
+  (`1 error` before implementation because the helper was absent, then `1
+  passed`), adjacent token proof `python -m pytest
+  tests\test_device_bootstrap_tokens.py -q` (`8 passed`), adjacent QR CLI
+  proof `python -m pytest tests\test_cli.py -q -k "qr_"` (`35 passed, 616
+  deselected`), `ruff check src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py
+  tests\test_device_bootstrap_tokens.py`, `mypy
+  src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py`, and focused `git diff
+  --check`. Source/test checkpointed in `ee419c3a`.
+
+- Native device bootstrap token handling now normalizes equivalent public key
+  encodings before binding and comparison, so a token bound with an Ed25519 PEM
+  public key can be reused and profile-checked with the raw base64url public
+  key, matching OpenClaw's `normalizeBootstrapPublicKey` flow. This closes
+  `OZ-COMP-001BV`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~11.1%.
+- Verified device-bootstrap public-key normalization with focused red/green
+  `python -m pytest tests\test_device_bootstrap_tokens.py::test_verify_device_bootstrap_token_accepts_equivalent_public_key_encodings -q`
+  (`1 failed` before implementation because the raw key was rejected after PEM
+  binding, then `1 passed`), adjacent token proof `python -m pytest
+  tests\test_device_bootstrap_tokens.py -q` (`9 passed`), adjacent QR CLI
+  proof `python -m pytest tests\test_cli.py -q -k "qr_"` (`35 passed, 616
+  deselected`), `ruff check src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py
+  tests\test_device_bootstrap_tokens.py`, `mypy
+  src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py`, and focused `git diff
+  --check`. Source/test checkpointed in `767e3045`.
+
+- Native device bootstrap token loading now prunes legacy records by
+  `ts`/`issuedAtMs` plus the OpenClaw bootstrap TTL even when no local
+  `expiresAtMs` field is present, preventing stale valid-profile records from
+  verifying. This closes `OZ-COMP-001BW`; repo-wide parity remains estimated at
+  ~99.9%, and packaging/companion breadth moves to ~11.2%.
+- Verified device-bootstrap TTL pruning with focused red/green
+  `python -m pytest tests\test_device_bootstrap_tokens.py::test_verify_device_bootstrap_token_rejects_expired_legacy_ts_record -q`
+  (`1 failed` before implementation because the expired legacy record verified,
+  then `1 passed`), adjacent token proof `python -m pytest
+  tests\test_device_bootstrap_tokens.py -q` (`10 passed`), adjacent QR CLI
+  proof `python -m pytest tests\test_cli.py -q -k "qr_"` (`35 passed, 616
+  deselected`), `ruff check src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py
+  tests\test_device_bootstrap_tokens.py`, `mypy
+  src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py`, and focused `git diff
+  --check`. Source/test checkpointed in `758f6299`.
+
+- Native device bootstrap token issuance now emits a
+  `bootstrap_token_scopes_stripped` warning when requested profiles include
+  scopes outside the bootstrap handoff allowlist, including requested,
+  retained, and stripped scope context. This closes `OZ-COMP-001BX`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~11.3%.
+- Verified device-bootstrap stripped-scope warning with focused red/green
+  `python -m pytest tests\test_device_bootstrap_tokens.py::test_issue_device_bootstrap_token_logs_stripped_overbroad_scopes -q`
+  (`1 failed` before implementation because no warning was emitted, then `1
+  passed`), adjacent token proof `python -m pytest
+  tests\test_device_bootstrap_tokens.py -q` (`11 passed`), adjacent QR CLI
+  proof `python -m pytest tests\test_cli.py -q -k "qr_"` (`35 passed, 616
+  deselected`), `ruff check src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py
+  tests\test_device_bootstrap_tokens.py`, `mypy
+  src\openzues\services\device_bootstrap_profile.py
+  src\openzues\services\device_bootstrap_tokens.py`, and focused `git diff
+  --check`. Source/test checkpointed in `3e7d87c0`.
+
+- Native CLI now exposes top-level `openzues logs` with OpenClaw-style log-tail
+  JSON over the existing gateway log service, including `--limit`,
+  `--max-bytes`, and `--cursor` options plus basic human rendering. This
+  closes `OZ-PKG-001DE`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.99999993%.
+- Verified top-level logs CLI tail with focused red/green `python -m pytest
+  tests\test_cli.py::test_logs_json_reads_gateway_log_tail -q` (`1 failed`
+  before implementation because the command was absent, then `1 passed`),
+  adjacent logs proof `python -m pytest tests\test_cli.py -q -k "logs"` (`2
+  passed, 650 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+  --check`. Source/test checkpointed in `8ce8d4aa`.
+
+- Native `openzues logs --plain --local-time` now parses structured gateway
+  log lines and renders timestamps in local time without a trailing `Z`,
+  matching OpenClaw's logs CLI local-time behavior. This closes
+  `OZ-PKG-001DF`; repo-wide parity remains estimated at ~99.9%, and runtime/
+  CLI/doctor native-bridge parity moves to ~99.99999994%.
+- Verified logs CLI local-time formatting with focused red/green
+  `python -m pytest tests\test_cli.py::test_logs_plain_local_time_formats_structured_log_lines -q`
+  (`1 failed` before implementation because `--local-time` was unsupported,
+  then `1 passed`), adjacent logs proof `python -m pytest tests\test_cli.py -q
+  -k "logs"` (`3 passed, 650 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+  --check`. Source/test checkpointed in `3970985d`.
+
+- Native `openzues logs --plain` truncation notices now include the upstream
+  `--max-bytes` recovery hint: `Log tail truncated (increase --max-bytes).`
+  This closes `OZ-PKG-001DG`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor native-bridge parity moves to ~99.99999995%.
+- Verified logs CLI truncation hint parity with focused red/green
+  `python -m pytest tests\test_cli.py::test_logs_plain_truncation_notice_includes_max_bytes_hint -q`
+  (`1 failed` before implementation because the hint was missing, then `1
+  passed`), adjacent logs proof `python -m pytest tests\test_cli.py -q -k
+  "logs"` (`4 passed, 650 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+  --check`. Source/test checkpointed in `d9a631f6`.
 
 ## References
 

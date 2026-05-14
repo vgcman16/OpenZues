@@ -1634,6 +1634,61 @@ def _emit_channel_logs(payload: dict[str, object], *, json_output: bool) -> None
         typer.echo(" ".join(parts))
 
 
+def _format_log_tail_timestamp(value: str, *, local_time: bool) -> str:
+    if not local_time:
+        return value
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone().isoformat(timespec="milliseconds")
+
+
+def _format_log_tail_line(raw: str, *, local_time: bool) -> str:
+    parsed = _parse_channel_log_line(raw)
+    if parsed is None:
+        return raw
+    time_text = _optional_cli_string(parsed.get("time"))
+    level = _optional_cli_string(parsed.get("level"))
+    label = _optional_cli_string(parsed.get("subsystem")) or _optional_cli_string(
+        parsed.get("module")
+    )
+    message = _optional_cli_string(parsed.get("message")) or raw
+    parts = []
+    if time_text:
+        parts.append(_format_log_tail_timestamp(time_text, local_time=local_time))
+    if level:
+        parts.append(level)
+    if label:
+        parts.append(label)
+    parts.append(message)
+    return " ".join(parts)
+
+
+def _emit_logs_tail(
+    payload: dict[str, object],
+    *,
+    json_output: bool,
+    local_time: bool = False,
+) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(f"Log file: {payload.get('file') or ''}")
+    if payload.get("truncated"):
+        typer.echo("Log tail truncated (increase --max-bytes).", err=True)
+    if payload.get("reset"):
+        typer.echo("Log cursor reset.", err=True)
+    lines = payload.get("lines")
+    if not isinstance(lines, list) or not lines:
+        typer.echo("No log lines.")
+        return
+    for line in lines:
+        typer.echo(_format_log_tail_line(str(line), local_time=local_time))
+
+
 def _msteams_delegated_auth_config_patch(account_id: str | None) -> dict[str, object]:
     normalized_account_id = (
         _optional_cli_string(account_id)
@@ -99426,6 +99481,23 @@ async def _build_channel_logs_payload(
     }
 
 
+async def _build_logs_tail_payload(
+    services: CliServices,
+    *,
+    cursor: int | None,
+    limit: int,
+    max_bytes: int,
+) -> dict[str, object]:
+    try:
+        return await services.gateway_logs.read_tail(
+            cursor=cursor,
+            limit=limit,
+            max_bytes=max_bytes,
+        )
+    except GatewayLogsUnavailableError as exc:
+        raise ValueError(str(exc)) from exc
+
+
 async def _build_operator_dashboard(services: CliServices) -> DashboardView | SimpleNamespace:
     live_dashboard = await _try_live_dashboard_view(services.settings)
     if live_dashboard is not None:
@@ -100713,6 +100785,62 @@ def health_command(
             typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_health(payload, json_output=json_output)
+
+
+@app.command("logs")
+def logs_command(
+    limit: int = typer.Option(
+        200,
+        "--limit",
+        min=1,
+        max=5_000,
+        help="Maximum log lines to return.",
+    ),
+    max_bytes: int = typer.Option(
+        250_000,
+        "--max-bytes",
+        min=1,
+        max=1_000_000,
+        help="Maximum bytes to read from the log file.",
+    ),
+    cursor: int | None = typer.Option(
+        None,
+        "--cursor",
+        min=0,
+        help="Resume reading from a previous cursor.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the log tail as JSON.",
+    ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="Emit plain text log lines.",
+    ),
+    local_time: bool = typer.Option(
+        False,
+        "--local-time",
+        help="Display parsed timestamps in the local timezone.",
+    ),
+) -> None:
+    _ = plain
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_logs_tail_payload(
+            services,
+            cursor=cursor,
+            limit=limit,
+            max_bytes=max_bytes,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_logs_tail(payload, json_output=json_output, local_time=local_time)
 
 
 @app.command("qr")

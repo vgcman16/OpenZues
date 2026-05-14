@@ -1,6 +1,6 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-05-12
+Updated: 2026-05-14
 
 Current percentage rollup:
 
@@ -15,7 +15,7 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999992% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999995% after the
   runtime bridge doctor posture, native ACP client interactive replay, ACP
   persisted task-record child-cap counting, ACP `streamTo="parent"`
   requester-context preflight, ACP `resumeSessionId` requester-context
@@ -31,7 +31,8 @@ Current percentage rollup:
   post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
   MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
-  preflight, devices list/approve CLI, package-update downgrade confirmation,
+  preflight, devices list/approve CLI, top-level logs CLI tail/local-time formatting/truncation hint,
+  package-update downgrade confirmation,
   stored-channel package update dispatch, package-update Node engine preflight,
   package-update activated plugin/channel-probe/version-mismatch restart-health failure,
   gateway health `serverVersion` projection,
@@ -187,12 +188,16 @@ Current percentage rollup:
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, and disabled-account capability action gating.
-- The packaging/companion app breadth family is estimated at ~7.2% after QR
+- The packaging/companion app breadth family is estimated at ~11.3% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
   gateway dispatch, remote device mutation dispatch, configured remote URL
   defaults, loopback pairing-required fallback, approval-state preview
-  metadata, device token scope-preserving rotation, approved-role device token
+  metadata, device-pair timestamp/supersession/interactive-visibility
+  parity, device-bootstrap profile/token lookup, revoke, clear, verify, bound
+  profile, redeem, restore, public-key normalization, TTL pruning, and
+  stripped-scope warning helpers,
+  device token scope-preserving rotation, approved-role device token
   rotation gates, approved-scope device token rotation baselines, requested
   operator-scope pairing approval gates, inherited-scope rotation caller gates,
   scoped token revocation caller gates, pairing repair inherited-token scope
@@ -13336,3 +13341,120 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   breadth moves to ~9.9%. Continue companion-app device flows,
   packaging/distribution, ACP lifecycle, provider action breadth, or
   setup/onboarding gaps.
+- Current queue-head adjustment: native device pairing now preserves the
+  original pending request timestamp when the same device reconnects with the
+  same approval snapshot, preventing implicit `--latest` queue-jumping while
+  still refreshing display/IP/silent metadata. Source/test checkpointed in
+  `04a23607`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~10.0%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
+- Current queue-head adjustment: native device pairing now supersedes pending
+  requests when approval roles/scopes change, merging prior and incoming
+  approval requirements into a fresh request id. Source/test checkpointed in
+  `ac3d1821`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~10.1%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
+- Current queue-head adjustment: native device pairing now preserves
+  interactive visibility when a pending request is superseded, distinguishing
+  explicit `silent=false` from omitted `silent` in SQLite-backed pending
+  requests and applying OpenClaw's refresh/replacement rule. Source/test
+  checkpointed in `fd385434`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~10.2%. Continue companion-app
+  device flows, packaging/distribution, ACP lifecycle, provider action
+  breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native device bootstrap token issuance now
+  accepts explicit profiles and bounds persisted bootstrap scopes to OpenClaw's
+  handoff allowlist before writing `devices/bootstrap.json`. Source/test
+  checkpointed in `e32b69c0`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~10.3%. Continue companion-app
+  device flows, packaging/distribution, ACP lifecycle, provider action
+  breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native device bootstrap token handling now
+  loads normalized persisted profiles for valid trimmed bootstrap tokens,
+  matching OpenClaw's token profile lookup helper. Source/test checkpointed in
+  `31a935c6`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~10.4%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
+- Current queue-head adjustment: native device bootstrap token handling can
+  now revoke one specific trimmed token, remove it from
+  `devices/bootstrap.json`, and return the removed record. Source/test
+  checkpointed in `363ce2d3`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~10.5%. Continue companion-app
+  device flows, packaging/distribution, ACP lifecycle, provider action
+  breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native device bootstrap token handling can
+  now clear all outstanding non-expired bootstrap tokens and return the
+  removed count. Source/test checkpointed in `19c8b75c`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~10.6%. Continue companion-app device flows, packaging/distribution, ACP
+  lifecycle, provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native device bootstrap token handling now
+  verifies tokens, binds them to the first device identity, allows
+  same-identity reuse, and rejects other identities or out-of-profile role/scope
+  requests. Source/test checkpointed in `2a1f2724`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~10.7%.
+  Continue companion-app device flows, packaging/distribution, ACP lifecycle,
+  provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native device bootstrap token handling now
+  returns a bound bootstrap profile only for the same verified
+  token/device/public-key tuple. Source/test checkpointed in `8e3c7279`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~10.8%. Continue companion-app device flows,
+  packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
+- Current queue-head adjustment: native device bootstrap token handling now
+  records redeemed roles/scopes, persists `redeemedProfile`, and reports full
+  profile redemption. Source/test checkpointed in `dd4660fe`; repo-wide
+  parity remains estimated at ~99.9%, and packaging/companion breadth moves
+  to ~10.9%. Continue companion-app device flows, packaging/distribution, ACP
+  lifecycle, provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native device bootstrap token handling can
+  now restore a revoked token record by token key for send-failure recovery.
+  Source/test checkpointed in `ee419c3a`; repo-wide parity remains estimated
+  at ~99.9%, and packaging/companion breadth moves to ~11.0%. Continue
+  companion-app device flows, packaging/distribution, ACP lifecycle, provider
+  action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native device bootstrap token handling now
+  normalizes equivalent public key encodings before binding and bound-profile
+  checks, so PEM and raw base64url Ed25519 public keys are treated as the same
+  device key. Source/test checkpointed in `767e3045`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~11.1%.
+  Continue companion-app device flows, packaging/distribution, ACP lifecycle,
+  provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native device bootstrap token loading now
+  prunes expired legacy records by `ts`/`issuedAtMs` plus the OpenClaw bootstrap
+  TTL even when no local `expiresAtMs` field is present. Source/test
+  checkpointed in `758f6299`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~11.2%. Continue companion-app
+  device flows, packaging/distribution, ACP lifecycle, provider action breadth,
+  or setup/onboarding gaps.
+- Current queue-head adjustment: native device bootstrap token issuance now
+  emits `bootstrap_token_scopes_stripped` warnings with requested, retained,
+  and stripped scope context when explicit profiles request non-handoff scopes.
+  Source/test checkpointed in `3e7d87c0`; repo-wide parity remains estimated at
+  ~99.9%, and packaging/companion breadth moves to ~11.3%. Continue
+  companion-app device flows, packaging/distribution, ACP lifecycle, provider
+  action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native CLI now exposes top-level
+  `openzues logs` over the gateway log tail service with JSON output and
+  `--limit` / `--max-bytes` / `--cursor` options. Source/test checkpointed in
+  `8ce8d4aa`; repo-wide parity remains estimated at ~99.9%, and runtime/CLI/
+  doctor native-bridge parity moves to ~99.99999993%. Continue remaining
+  packaging/distribution breadth, ACP lifecycle depth, installed plugin
+  activation, provider media edges, or companion app flows.
+- Current queue-head adjustment: native `openzues logs --plain --local-time`
+  now parses structured log lines and renders local timestamps without a
+  trailing `Z`. Source/test checkpointed in `3970985d`; repo-wide parity
+  remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity
+  moves to ~99.99999994%. Continue remaining packaging/distribution breadth,
+  ACP lifecycle depth, installed plugin activation, provider media edges, or
+  companion app flows.
+- Current queue-head adjustment: native `openzues logs --plain` truncation
+  notices now include the upstream `--max-bytes` recovery hint. Source/test
+  checkpointed in `d9a631f6`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor native-bridge parity moves to ~99.99999995%. Continue
+  remaining packaging/distribution breadth, ACP lifecycle depth, installed
+  plugin activation, provider media edges, or companion app flows.
