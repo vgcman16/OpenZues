@@ -4,7 +4,7 @@ from openzues.services.gateway_node_command_policy import (
 )
 
 
-def test_macos_allowlist_includes_openclaw_screen_commands() -> None:
+def test_macos_allowlist_matches_openclaw_screen_defaults() -> None:
     allowlist = resolve_node_command_allowlist(
         platform="macOS 26.3.1",
         device_family="Mac",
@@ -12,15 +12,15 @@ def test_macos_allowlist_includes_openclaw_screen_commands() -> None:
 
     declared = ("screen.snapshot", "screen.record")
 
-    for command in declared:
-        assert command in allowlist
+    assert "screen.snapshot" in allowlist
+    assert "screen.record" not in allowlist
     assert normalize_declared_node_commands(
         declared,
         allowlist=allowlist,
-    ) == declared
+    ) == ("screen.snapshot",)
 
 
-def test_macos_allowlist_includes_openclaw_exec_approval_commands() -> None:
+def test_macos_allowlist_keeps_openclaw_exec_approval_commands_gated() -> None:
     allowlist = resolve_node_command_allowlist(
         platform="macOS 26.3.1",
         device_family="Mac",
@@ -32,27 +32,28 @@ def test_macos_allowlist_includes_openclaw_exec_approval_commands() -> None:
     )
 
     for command in declared:
-        assert command in allowlist
+        assert command not in allowlist
     assert normalize_declared_node_commands(
         declared,
         allowlist=allowlist,
-    ) == declared
+    ) == ()
 
 
-def test_macos_allowlist_includes_openclaw_camera_action_commands() -> None:
+def test_macos_allowlist_keeps_openclaw_camera_actions_gated() -> None:
     allowlist = resolve_node_command_allowlist(
         platform="macOS 26.3.1",
         device_family="MacBook Pro",
     )
 
-    declared = ("camera.snap", "camera.clip")
+    declared = ("camera.list", "camera.snap", "camera.clip")
 
-    for command in declared:
-        assert command in allowlist
+    assert "camera.list" in allowlist
+    assert "camera.snap" not in allowlist
+    assert "camera.clip" not in allowlist
     assert normalize_declared_node_commands(
         declared,
         allowlist=allowlist,
-    ) == declared
+    ) == ("camera.list",)
 
 
 def test_windows_allowlist_matches_openclaw_companion_defaults() -> None:
@@ -71,93 +72,65 @@ def test_windows_allowlist_matches_openclaw_companion_defaults() -> None:
     assert "screen.record" not in allowlist
 
 
-def test_android_allowlist_includes_openclaw_action_command_defaults() -> None:
+def test_android_allowlist_matches_openclaw_diagnostics_defaults_and_gates_actions() -> None:
     allowlist = resolve_node_command_allowlist(
         platform="Android 16",
         device_family="Android phone",
     )
 
-    declared = (
-        "camera.snap",
-        "camera.clip",
-        "contacts.add",
-        "calendar.add",
-        "sms.send",
-        "sms.search",
-    )
-
-    for command in declared:
-        assert command in allowlist
+    assert "notifications.actions" in allowlist
+    assert "device.permissions" in allowlist
+    assert "device.health" in allowlist
+    assert "callLog.search" in allowlist
+    assert "system.notify" in allowlist
+    assert "camera.snap" not in allowlist
+    assert "camera.clip" not in allowlist
+    assert "contacts.add" not in allowlist
+    assert "calendar.add" not in allowlist
+    assert "sms.send" not in allowlist
+    assert "sms.search" not in allowlist
     assert normalize_declared_node_commands(
-        declared,
+        ("notifications.actions", "sms.search"),
         allowlist=allowlist,
-    ) == declared
+    ) == ("notifications.actions",)
 
 
-def test_ios_allowlist_includes_openclaw_screen_record_default() -> None:
+def test_ios_allowlist_matches_openclaw_service_defaults_and_gates_actions() -> None:
     allowlist = resolve_node_command_allowlist(
         platform="iOS 18",
         device_family="iPhone",
     )
 
-    assert "screen.record" in allowlist
+    assert "device.info" in allowlist
+    assert "device.status" in allowlist
+    assert "system.notify" in allowlist
+    assert "contacts.search" in allowlist
+    assert "calendar.events" in allowlist
+    assert "reminders.list" in allowlist
+    assert "photos.latest" in allowlist
+    assert "motion.activity" in allowlist
+    assert "screen.record" not in allowlist
+    assert "camera.snap" not in allowlist
+    assert "camera.clip" not in allowlist
+    assert "contacts.add" not in allowlist
+    assert "calendar.add" not in allowlist
+    assert "reminders.add" not in allowlist
+    assert "chat.push" not in allowlist
+    assert "talk.ptt.start" not in allowlist
+    assert "watch.status" not in allowlist
     assert normalize_declared_node_commands(
-        ("screen.record",),
+        ("device.info", "screen.record", "chat.push"),
         allowlist=allowlist,
-    ) == ("screen.record",)
-
-
-def test_ios_allowlist_includes_openclaw_chat_and_talk_defaults() -> None:
-    allowlist = resolve_node_command_allowlist(
-        platform="iPadOS 18",
-        device_family="iPad",
-    )
-
-    declared = (
-        "chat.push",
-        "talk.ptt.start",
-        "talk.ptt.stop",
-        "talk.ptt.cancel",
-        "talk.ptt.once",
-    )
-
-    for command in declared:
-        assert command in allowlist
-    assert normalize_declared_node_commands(
-        declared,
-        allowlist=allowlist,
-    ) == declared
-
-
-def test_ios_allowlist_includes_openclaw_capability_command_defaults() -> None:
-    allowlist = resolve_node_command_allowlist(
-        platform="iOS 18",
-        device_family="iPhone",
-    )
-
-    declared = (
-        "camera.snap",
-        "camera.clip",
-        "watch.status",
-        "watch.notify",
-        "contacts.add",
-        "calendar.add",
-        "reminders.add",
-    )
-
-    for command in declared:
-        assert command in allowlist
-    assert normalize_declared_node_commands(
-        declared,
-        allowlist=allowlist,
-    ) == declared
+    ) == ("device.info",)
 
 
 def test_explicit_allow_commands_can_enable_screen_record() -> None:
     allowlist = resolve_node_command_allowlist(
         platform="ios",
         device_family="iPhone",
-        allow_commands=("screen.record",),
+        allow_commands=("screen.record", "camera.snap", "chat.push"),
     )
 
     assert "screen.record" in allowlist
+    assert "camera.snap" in allowlist
+    assert "chat.push" in allowlist

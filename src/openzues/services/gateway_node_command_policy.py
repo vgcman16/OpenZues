@@ -13,37 +13,18 @@ _CANVAS_COMMANDS = (
     "canvas.a2ui.reset",
 )
 _CAMERA_COMMANDS = ("camera.list",)
-_IOS_CAMERA_COMMANDS = (*_CAMERA_COMMANDS, "camera.snap", "camera.clip")
-_ANDROID_CAMERA_COMMANDS = _IOS_CAMERA_COMMANDS
-_MACOS_CAMERA_COMMANDS = _IOS_CAMERA_COMMANDS
 _LOCATION_COMMANDS = ("location.get",)
 _NOTIFICATION_COMMANDS = ("notifications.list",)
 _ANDROID_NOTIFICATION_COMMANDS = (*_NOTIFICATION_COMMANDS, "notifications.actions")
 _DEVICE_COMMANDS = ("device.info", "device.status")
 _ANDROID_DEVICE_COMMANDS = (*_DEVICE_COMMANDS, "device.permissions", "device.health")
 _CONTACTS_COMMANDS = ("contacts.search",)
-_IOS_CONTACTS_COMMANDS = (*_CONTACTS_COMMANDS, "contacts.add")
-_ANDROID_CONTACTS_COMMANDS = _IOS_CONTACTS_COMMANDS
 _CALENDAR_COMMANDS = ("calendar.events",)
-_IOS_CALENDAR_COMMANDS = (*_CALENDAR_COMMANDS, "calendar.add")
-_ANDROID_CALENDAR_COMMANDS = _IOS_CALENDAR_COMMANDS
 _CALL_LOG_COMMANDS = ("callLog.search",)
-_SMS_COMMANDS = ("sms.send", "sms.search")
 _REMINDERS_COMMANDS = ("reminders.list",)
-_IOS_REMINDERS_COMMANDS = (*_REMINDERS_COMMANDS, "reminders.add")
 _PHOTOS_COMMANDS = ("photos.latest",)
 _MOTION_COMMANDS = ("motion.activity", "motion.pedometer")
-_CHAT_COMMANDS = ("chat.push",)
-_IOS_TALK_COMMANDS = (
-    "talk.ptt.start",
-    "talk.ptt.stop",
-    "talk.ptt.cancel",
-    "talk.ptt.once",
-)
-_IOS_WATCH_COMMANDS = ("watch.status", "watch.notify")
 _SCREEN_COMMANDS = ("screen.snapshot",)
-_IOS_SCREEN_COMMANDS = ("screen.record",)
-_MACOS_SCREEN_COMMANDS = (*_SCREEN_COMMANDS, "screen.record")
 _IOS_SYSTEM_COMMANDS = ("system.notify",)
 _SYSTEM_COMMANDS = (
     "system.run.prepare",
@@ -51,11 +32,6 @@ _SYSTEM_COMMANDS = (
     "system.which",
     "system.notify",
     "browser.proxy",
-)
-_MACOS_SYSTEM_COMMANDS = (
-    *_SYSTEM_COMMANDS,
-    "system.execApprovals.get",
-    "system.execApprovals.set",
 )
 _UNKNOWN_PLATFORM_COMMANDS = (
     *_CANVAS_COMMANDS,
@@ -67,38 +43,7 @@ _UNKNOWN_PLATFORM_COMMANDS = (
 _PLATFORM_DEFAULTS: dict[str, tuple[str, ...]] = {
     "ios": (
         *_CANVAS_COMMANDS,
-        *_IOS_CAMERA_COMMANDS,
-        *_LOCATION_COMMANDS,
-        *_DEVICE_COMMANDS,
-        *_IOS_CONTACTS_COMMANDS,
-        *_IOS_CALENDAR_COMMANDS,
-        *_IOS_REMINDERS_COMMANDS,
-        *_PHOTOS_COMMANDS,
-        *_MOTION_COMMANDS,
-        *_CHAT_COMMANDS,
-        *_IOS_TALK_COMMANDS,
-        *_IOS_WATCH_COMMANDS,
-        *_IOS_SCREEN_COMMANDS,
-        *_IOS_SYSTEM_COMMANDS,
-    ),
-    "android": (
-        *_CANVAS_COMMANDS,
-        *_ANDROID_CAMERA_COMMANDS,
-        *_LOCATION_COMMANDS,
-        *_ANDROID_NOTIFICATION_COMMANDS,
-        "system.notify",
-        *_ANDROID_DEVICE_COMMANDS,
-        *_ANDROID_CONTACTS_COMMANDS,
-        *_ANDROID_CALENDAR_COMMANDS,
-        *_CALL_LOG_COMMANDS,
-        *_SMS_COMMANDS,
-        *_REMINDERS_COMMANDS,
-        *_PHOTOS_COMMANDS,
-        *_MOTION_COMMANDS,
-    ),
-    "macos": (
-        *_CANVAS_COMMANDS,
-        *_MACOS_CAMERA_COMMANDS,
+        *_CAMERA_COMMANDS,
         *_LOCATION_COMMANDS,
         *_DEVICE_COMMANDS,
         *_CONTACTS_COMMANDS,
@@ -106,8 +51,34 @@ _PLATFORM_DEFAULTS: dict[str, tuple[str, ...]] = {
         *_REMINDERS_COMMANDS,
         *_PHOTOS_COMMANDS,
         *_MOTION_COMMANDS,
-        *_MACOS_SYSTEM_COMMANDS,
-        *_MACOS_SCREEN_COMMANDS,
+        *_IOS_SYSTEM_COMMANDS,
+    ),
+    "android": (
+        *_CANVAS_COMMANDS,
+        *_CAMERA_COMMANDS,
+        *_LOCATION_COMMANDS,
+        *_ANDROID_NOTIFICATION_COMMANDS,
+        "system.notify",
+        *_ANDROID_DEVICE_COMMANDS,
+        *_CONTACTS_COMMANDS,
+        *_CALENDAR_COMMANDS,
+        *_CALL_LOG_COMMANDS,
+        *_REMINDERS_COMMANDS,
+        *_PHOTOS_COMMANDS,
+        *_MOTION_COMMANDS,
+    ),
+    "macos": (
+        *_CANVAS_COMMANDS,
+        *_CAMERA_COMMANDS,
+        *_LOCATION_COMMANDS,
+        *_DEVICE_COMMANDS,
+        *_CONTACTS_COMMANDS,
+        *_CALENDAR_COMMANDS,
+        *_REMINDERS_COMMANDS,
+        *_PHOTOS_COMMANDS,
+        *_MOTION_COMMANDS,
+        *_SYSTEM_COMMANDS,
+        *_SCREEN_COMMANDS,
     ),
     "desktop": _SYSTEM_COMMANDS,
     "linux": _SYSTEM_COMMANDS,
