@@ -191,7 +191,7 @@ Current percentage rollup:
   command-owner bootstrap, list default, bootstrap explanation, not-found
   error text, disabled-account capability action gating, and Google Chat
   add-on body-token webhook ingress.
-- The packaging/companion app breadth family is estimated at ~11.6% after QR
+- The packaging/companion app breadth family is estimated at ~11.7% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
   gateway dispatch, remote device mutation dispatch, configured remote URL
@@ -13529,6 +13529,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `ddd70a86`; repo-wide parity remains estimated at ~99.9%, and packaging/
   companion breadth moves to ~11.6%. Continue companion app device flows,
   provider media edges, packaging/distribution, or ACP lifecycle depth.
+- Current queue-head adjustment: iOS companion node command policy now includes
+  the upstream capability-gated camera, watch, contacts, calendar, and
+  reminders action commands for iPhone/iPad/iOS node metadata. Source/test
+  checkpointed in `dc72a787`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~11.7%. Continue companion app
+  device flows, provider media edges, packaging/distribution, or ACP lifecycle
+  depth.
 - Current queue-head adjustment: direct provider-native outbound sends now
   lift `MEDIA:` directives out of visible message text and persist/deliver them
   as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;
