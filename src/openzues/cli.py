@@ -99648,6 +99648,8 @@ def _normalize_pairing_setup_url(raw: str) -> str:
     value = str(raw or "").strip()
     if not value:
         raise ValueError("Gateway URL unavailable.")
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:/", value) and "://" not in value:
+        raise ValueError("Configured publicUrl is invalid.")
     candidate = value if "://" in value else f"wss://{value}"
     parsed = urlparse(candidate)
     if parsed.username or parsed.password:

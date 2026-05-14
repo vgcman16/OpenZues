@@ -215,6 +215,28 @@ def test_qr_setup_code_only_rejects_invalid_override_url_before_token_issue(
     assert not (data_dir / "devices" / "bootstrap.json").exists()
 
 
+def test_qr_setup_code_only_rejects_scheme_like_path_public_url_before_token_issue(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--setup-code-only",
+            "--public-url",
+            "http:/localhost:notaport",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "Configured publicUrl is invalid." in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
 def test_qr_setup_code_only_rejects_public_cleartext_url_before_token_issue(
     tmp_path, monkeypatch
 ) -> None:
