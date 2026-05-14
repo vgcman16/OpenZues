@@ -3,11 +3,15 @@ from __future__ import annotations
 import json
 import secrets
 import time
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from openzues.services.device_bootstrap_profile import default_device_bootstrap_profile
+from openzues.services.device_bootstrap_profile import (
+    default_device_bootstrap_profile,
+    normalize_device_bootstrap_handoff_profile,
+)
 
 DEVICE_BOOTSTRAP_TOKEN_TTL_SECONDS = 10 * 60
 
@@ -18,21 +22,31 @@ class DeviceBootstrapTokenIssue:
     expires_at_ms: int
 
 
-def issue_device_bootstrap_token(*, base_dir: Path) -> DeviceBootstrapTokenIssue:
+def issue_device_bootstrap_token(
+    *,
+    base_dir: Path,
+    profile: Mapping[str, Iterable[str]] | None = None,
+    roles: Iterable[str] | None = None,
+    scopes: Iterable[str] | None = None,
+) -> DeviceBootstrapTokenIssue:
     now_ms = int(time.time() * 1000)
     expires_at_ms = now_ms + DEVICE_BOOTSTRAP_TOKEN_TTL_SECONDS * 1000
     token = secrets.token_urlsafe(32)
     bootstrap_path = _bootstrap_token_path(base_dir)
     state = _read_bootstrap_state(bootstrap_path, now_ms=now_ms)
-    roles, scopes = default_device_bootstrap_profile()
+    bootstrap_roles, bootstrap_scopes = _issued_bootstrap_profile(
+        profile=profile,
+        roles=roles,
+        scopes=scopes,
+    )
     state[token] = {
         "token": token,
         "ts": now_ms,
         "issuedAtMs": now_ms,
         "expiresAtMs": expires_at_ms,
         "profile": {
-            "roles": roles,
-            "scopes": scopes,
+            "roles": bootstrap_roles,
+            "scopes": bootstrap_scopes,
         },
         "redeemedProfile": {
             "roles": [],
@@ -41,6 +55,22 @@ def issue_device_bootstrap_token(*, base_dir: Path) -> DeviceBootstrapTokenIssue
     }
     _write_bootstrap_state(bootstrap_path, state)
     return DeviceBootstrapTokenIssue(token=token, expires_at_ms=expires_at_ms)
+
+
+def _issued_bootstrap_profile(
+    *,
+    profile: Mapping[str, Iterable[str]] | None,
+    roles: Iterable[str] | None,
+    scopes: Iterable[str] | None,
+) -> tuple[list[str], list[str]]:
+    if profile is not None:
+        return normalize_device_bootstrap_handoff_profile(
+            profile.get("roles"),
+            profile.get("scopes"),
+        )
+    if roles is not None or scopes is not None:
+        return normalize_device_bootstrap_handoff_profile(roles, scopes)
+    return default_device_bootstrap_profile()
 
 
 def _bootstrap_token_path(base_dir: Path) -> Path:

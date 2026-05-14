@@ -70,3 +70,17 @@ def normalize_device_bootstrap_profile(
     normalized_roles = normalize_device_bootstrap_roles(roles)
     normalized_scopes = normalize_device_auth_scopes(scopes)
     return normalized_roles, normalized_scopes
+
+
+def normalize_device_bootstrap_handoff_profile(
+    roles: Iterable[str] | None,
+    scopes: Iterable[str] | None,
+) -> tuple[list[str], list[str]]:
+    normalized_roles = normalize_device_bootstrap_roles(roles)
+    normalized_scopes = normalize_device_auth_scopes(scopes)
+    bounded_scopes: list[str] = []
+    for role in normalized_roles:
+        bounded_scopes.extend(
+            resolve_bootstrap_profile_scopes_for_role(role, normalized_scopes)
+        )
+    return normalized_roles, normalize_device_auth_scopes(bounded_scopes)
