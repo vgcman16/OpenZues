@@ -24,16 +24,16 @@ Hermes or Warp integration.
 | Active gateway/session/tool-contract path | ~99.969% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.987% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.995% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Provider-native inbound/outbound breadth | ~99.9999996% | Near-complete bounded provider path; QQBot route-backed text/media sends, inline tags, structured self-closing media tags, reply sequencing, local media upload, chunked local media upload, voice-to-file fallback, file-media text follow-up delivery, direct image/video media text follow-up delivery, inline media text ordering/result metadata, Matrix route-backed implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, and direct outbound MEDIA/audio-as-voice/reply/reply-current directive lifting are checkpointed while broader provider inventory remains open | `docs/openclaw-parity-progress.md` |
+| Provider-native inbound/outbound breadth | ~99.9999997% | Near-complete bounded provider path; QQBot route-backed text/media sends, inline tags, structured self-closing media tags, reply sequencing, local media upload, chunked local media upload, voice-to-file fallback, file-media text follow-up delivery, direct image/video media text follow-up delivery, inline media text ordering/result metadata, Matrix route-backed implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, and direct outbound MEDIA/audio-as-voice/reply/reply-current stripping plus current-message resolution are checkpointed while broader provider inventory remains open | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.99999997% | Mostly landed; ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice, startup optimization, packaging, and installed plugin depth are advancing | `docs/openclaw-parity-progress.md` |
 | CLI/operator control plane | ~99.99999% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~11.4% | Minimal, active broad parity still open; local QR token/password SecretRef resolution plus SecretRef-template inference, Zalo/plugin-SDK profile-aware pairing approval commands, pending device-pair queue timestamp stability, changed approval-snapshot supersession, interactive supersession visibility, bootstrap profile bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope warnings, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, and Windows companion-node command defaults are now checkpointed | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
 
-Latest verified adjustment: `OZ-PROV-001HC` outbound `reply_to_current`
-directive stripping moves provider-native inbound/outbound breadth to
-~99.9999996%;
+Latest verified adjustment: `OZ-PROV-001HD` outbound `reply_to_current`
+context resolution moves provider-native inbound/outbound breadth to
+~99.9999997%;
 repo-wide OpenClaw parity remains estimated at ~99.9%.
 
 ## Current Worktree Boundary
@@ -3519,6 +3519,28 @@ companion breadth.
     then `1 passed`), explicit-reply guard proof (`1 passed`), adjacent
     provider/native proof (`11 passed, 504 deselected`), ruff, mypy, and
     focused `git diff --check`.
+
+- [x] `OZ-PROV-001HD` Direct outbound `reply_to_current` context resolution
+  - Source: `openclaw-main/src/auto-reply/reply/reply-directives.ts`,
+    `openclaw-main/src/auto-reply/reply/reply-plumbing.test.ts`,
+    `openclaw-main/src/infra/outbound/message-action-threading.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_ops_mesh.py`, `tests/test_gateway_node_methods.py`
+  - Contract: direct provider-native outbound sends and gateway `send` resolve
+    `[[reply_to_current]]` to supplied current-message context, strip the tag
+    from visible text, and project the resolved id into persisted/runtime reply
+    metadata without overriding explicit reply targets.
+  - Evidence required: focused OpsMesh current-message proof, focused gateway
+    send proof, adjacent provider/native send proof, adjacent gateway send
+    proof, ruff, mypy
+  - Status: checkpointed in `de881dae`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green OpsMesh and gateway proofs
+    (`1 failed` each before implementation, then `1 passed` each), adjacent
+    provider/native proof (`12 passed, 504 deselected`), adjacent gateway proof
+    (`3 passed, 1301 deselected`), ruff, mypy, and focused `git diff --check`.
 
 - [x] `OZ-PROV-001DA` iMessage config-backed CLI/RPC account probe
   - Source: `openclaw-main/extensions/imessage/src/probe.ts`,
