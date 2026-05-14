@@ -6,7 +6,7 @@
 - Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999999999999999%.
 - Estimated active gateway/session/tool-contract family parity: ~99.969% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~99.987% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `artifacts.list` / `artifacts.get` / `artifacts.download`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
-- Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.995%;
+- Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.996%;
   it is no longer the active queue head.
 - Estimated packaging/companion app breadth: ~11.4% after QR setup-code
   safety/SecretRef slices, local QR token/password SecretRef resolution,
@@ -25891,6 +25891,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\app.py tests\test_ops_mesh.py tests\test_googlechat_webhook.py`,
   and `mypy src\openzues\services\ops_mesh.py src\openzues\app.py`.
   Source/test checkpointed in `1f24c150`.
+
+- `browser.act` now accepts OpenClaw-style click requests with
+  `doubleClick=true`, and the native browser runtime maps them to the existing
+  `dblclick` action while preserving ordinary click behavior. This closes
+  `OZ-CANVAS-001W`; repo-wide parity remains estimated at ~99.9%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.996%.
+- Verified browser click `doubleClick` parity with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_act_accepts_openclaw_click_double_click_request tests\test_gateway_node_methods.py::test_browser_act_args_maps_bounded_action_subset -q`
+  (`2 passed` after implementation; the gateway proof failed first because
+  `doubleClick` was rejected, and the runtime mapping proof failed first
+  because the action stayed `click`), adjacent browser proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "browser_act or browser_runtime or
+  browser_clipboard or browser_focus"` (`7 passed, 1298 deselected`),
+  `ruff check src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_browser_runtime.py`. Source/test checkpointed
+  in `81f8ba7a`.
 
 ## References
 

@@ -19,18 +19,43 @@ may lag behind this tracker.
 | Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999999999% |
 | Active gateway/session/tool-contract family | ~99.969% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
-| Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
+| Browser/canvas/nodes/voice bounded command family | ~99.996% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.99999978% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Matrix implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, Google Chat add-on body-token webhook ingress, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot structured self-closing media tags, QQBot reply message sequencing, QQBot local media file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot file-media text follow-up delivery, QQBot direct image/video media text follow-up delivery, QQBot inline media text ordering/result metadata, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, safe direct outbound MEDIA/audio-as-voice/reply/reply-current stripping plus current-message resolution, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.99999997% | High for bounded native bridge | ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~11.4% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, Zalo/plugin-SDK profile-aware pairing approval commands, pending device-pair queue timestamp stability, changed approval-snapshot supersession, interactive supersession visibility, bootstrap profile bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope warnings, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR SecretRef-template inference, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, QR local token SecretRef resolution, and Windows companion-node command defaults are landed; companion apps remain mostly open |
 
-Latest verified adjustment: `OZ-PROV-001HL` Google Chat add-on body-token
-webhook ingress moves provider-native inbound/outbound breadth to
-~99.99999978%;
-repo-wide OpenClaw parity remains estimated at ~99.9%.
+Latest verified adjustment: `OZ-CANVAS-001W` browser `browser.act`
+`doubleClick` click normalization is source/test checkpointed in `81f8ba7a`,
+moving browser/canvas/nodes/voice bounded command parity to ~99.996%.
+Repo-wide OpenClaw parity remains estimated at ~99.9%.
 
 ## Implemented / Locked Bounded Areas
+
+- [x] Browser `browser.act` click `doubleClick` normalization.
+  - Source: `openclaw-main/extensions/browser/src/browser/client-actions.types.ts`,
+    `openclaw-main/extensions/browser/src/browser/routes/agent.act.normalize.ts`,
+    `openclaw-main/extensions/browser/src/browser-tool.schema.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_browser_runtime.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: OpenClaw-style click actions accepting `doubleClick=true` must
+    pass gateway validation and dispatch through the native browser runtime as
+    a `dblclick` action while omitted/false values preserve ordinary click
+    behavior.
+  - Evidence required: focused browser gateway/runtime tests, adjacent browser
+    gateway proof, ruff, mypy
+  - Status: checkpointed in `81f8ba7a`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_browser_act_accepts_openclaw_click_double_click_request tests\test_gateway_node_methods.py::test_browser_act_args_maps_bounded_action_subset -q`
+    (`2 passed` after implementation; failed before implementation with the
+    gateway rejecting `doubleClick` and the runtime keeping the action as
+    `click`), adjacent browser proof `python -m pytest
+    tests\test_gateway_node_methods.py -q -k "browser_act or browser_runtime
+    or browser_clipboard or browser_focus"` (`7 passed, 1298 deselected`),
+    ruff, and mypy.
 
 - [x] ACP `resumeSessionId` ownership enforcement for `sessions.spawn`.
   - Source: `openclaw-main/src/agents/acp-spawn.ts`

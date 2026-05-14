@@ -13500,9 +13500,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `MESSAGE`, and route the message into the native session-backed delivery
   path through `/googlechat`. Source/test checkpointed in `1f24c150`;
   repo-wide parity remains estimated at ~99.9%, and provider-native
-  inbound/outbound breadth moves to ~99.99999978%. Continue the mapped browser
-  `browser.act` `doubleClick` seam, then exact plugin helper subpaths,
-  provider media edges, packaging/distribution, or companion breadth.
+  inbound/outbound breadth moves to ~99.99999978%. Continue exact plugin
+  helper subpaths, provider media edges, packaging/distribution, or companion
+  breadth.
+- Current queue-head adjustment: `browser.act` now accepts OpenClaw-style click
+  requests with `doubleClick=true`, and the native browser runtime maps them to
+  `dblclick` while preserving ordinary click behavior. Source/test
+  checkpointed in `81f8ba7a`; repo-wide parity remains estimated at ~99.9%,
+  and browser/canvas/nodes/voice bounded-command parity moves to ~99.996%.
+  Continue exact plugin helper subpaths, provider media edges,
+  packaging/distribution, or companion breadth.
 - Current queue-head adjustment: direct provider-native outbound sends now
   lift `MEDIA:` directives out of visible message text and persist/deliver them
   as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;
