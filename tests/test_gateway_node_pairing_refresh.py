@@ -320,6 +320,58 @@ async def test_pair_request_same_approval_snapshot_preserves_original_ts() -> No
 
 
 @pytest.mark.asyncio
+async def test_pair_request_changed_roles_or_scopes_supersedes_pending_request() -> None:
+    service = GatewayNodePairingService(_FakePairingDatabase())
+
+    first = await service.request(
+        node_id="pair-node-supersede",
+        public_key="public-key-supersede",
+        display_name="Supersede Node",
+        platform="ios",
+        version=None,
+        core_version=None,
+        ui_version=None,
+        device_family=None,
+        model_identifier=None,
+        caps=None,
+        commands=None,
+        role="node",
+        roles=None,
+        scopes=[],
+        remote_ip=None,
+        silent=True,
+        now_ms=1_000,
+    )
+    second = await service.request(
+        node_id="pair-node-supersede",
+        public_key="public-key-supersede",
+        display_name="Supersede Node Operator",
+        platform=None,
+        version=None,
+        core_version=None,
+        ui_version=None,
+        device_family=None,
+        model_identifier=None,
+        caps=None,
+        commands=None,
+        role="operator",
+        roles=None,
+        scopes=["operator.read", "operator.write"],
+        remote_ip=None,
+        silent=True,
+        now_ms=2_000,
+    )
+    listed = await service.list_pending()
+
+    assert second["created"] is True
+    assert second["request"]["requestId"] != first["request"]["requestId"]
+    assert second["request"]["roles"] == ["node", "operator"]
+    assert second["request"]["scopes"] == ["operator.read", "operator.write"]
+    assert second["request"]["ts"] == 2_000
+    assert [item["requestId"] for item in listed] == [second["request"]["requestId"]]
+
+
+@pytest.mark.asyncio
 async def test_pair_request_refresh_preserves_silent_when_omitted() -> None:
     service = GatewayNodePairingService(_FakePairingDatabase())
 

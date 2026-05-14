@@ -186,15 +186,25 @@ class GatewayNodePairingService:
                 persisted_silent = True
             else:
                 persisted_silent = None
-        requested_at_ms = (
-            existing_request.ts
-            if existing_request is not None
+        same_approval_snapshot = (
+            existing_request is not None
             and _same_pairing_approval_snapshot(
                 existing_request,
                 public_key=resolved_public_key,
                 roles=resolved_roles,
                 scopes=resolved_scopes,
             )
+        )
+        if existing_request is not None and not same_approval_snapshot:
+            resolved_roles = _dedupe_scopes([*existing_request.roles, *resolved_roles])
+            resolved_scopes = _dedupe_scopes([*existing_request.scopes, *resolved_scopes])
+            await self.database.delete_gateway_node_pairing_request(
+                existing_request.request_id
+            )
+            existing_request = None
+        requested_at_ms = (
+            existing_request.ts
+            if same_approval_snapshot and existing_request is not None
             else now_ms
         )
 
