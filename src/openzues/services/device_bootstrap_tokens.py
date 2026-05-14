@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import json
 import secrets
 import time
@@ -11,6 +12,7 @@ from typing import Any
 from openzues.services.device_bootstrap_profile import (
     default_device_bootstrap_profile,
     normalize_device_bootstrap_handoff_profile,
+    normalize_device_bootstrap_profile,
 )
 
 DEVICE_BOOTSTRAP_TOKEN_TTL_SECONDS = 10 * 60
@@ -57,6 +59,23 @@ def issue_device_bootstrap_token(
     return DeviceBootstrapTokenIssue(token=token, expires_at_ms=expires_at_ms)
 
 
+def get_device_bootstrap_token_profile(
+    *,
+    base_dir: Path,
+    token: str,
+) -> dict[str, list[str]] | None:
+    record = _find_bootstrap_record(base_dir=base_dir, token=token)
+    if record is None:
+        return None
+    raw_profile = record.get("profile")
+    profile = raw_profile if isinstance(raw_profile, dict) else record
+    roles, scopes = normalize_device_bootstrap_profile(
+        profile.get("roles"),
+        profile.get("scopes"),
+    )
+    return {"roles": roles, "scopes": scopes}
+
+
 def _issued_bootstrap_profile(
     *,
     profile: Mapping[str, Iterable[str]] | None,
@@ -71,6 +90,21 @@ def _issued_bootstrap_profile(
     if roles is not None or scopes is not None:
         return normalize_device_bootstrap_handoff_profile(roles, scopes)
     return default_device_bootstrap_profile()
+
+
+def _find_bootstrap_record(*, base_dir: Path, token: str) -> dict[str, Any] | None:
+    provided_token = token.strip()
+    if not provided_token:
+        return None
+    state = _read_bootstrap_state(
+        _bootstrap_token_path(base_dir),
+        now_ms=int(time.time() * 1000),
+    )
+    for token_key, record in state.items():
+        persisted_token = str(record.get("token") or token_key)
+        if hmac.compare_digest(provided_token, persisted_token):
+            return record
+    return None
 
 
 def _bootstrap_token_path(base_dir: Path) -> Path:

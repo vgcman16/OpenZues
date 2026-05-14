@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 
-from openzues.services.device_bootstrap_tokens import issue_device_bootstrap_token
+from openzues.services.device_bootstrap_tokens import (
+    get_device_bootstrap_token_profile,
+    issue_device_bootstrap_token,
+)
 
 
 def test_issue_device_bootstrap_token_bounds_explicit_profile_to_handoff_scopes(
@@ -36,3 +39,27 @@ def test_issue_device_bootstrap_token_bounds_explicit_profile_to_handoff_scopes(
             "operator.write",
         ],
     }
+
+
+def test_get_device_bootstrap_token_profile_loads_valid_trimmed_token(
+    tmp_path,
+) -> None:
+    issued = issue_device_bootstrap_token(
+        base_dir=tmp_path,
+        profile={
+            "roles": [" operator ", "operator"],
+            "scopes": ["operator.read", " operator.read "],
+        },
+    )
+
+    profile = get_device_bootstrap_token_profile(
+        base_dir=tmp_path,
+        token=f" {issued.token} ",
+    )
+    missing = get_device_bootstrap_token_profile(base_dir=tmp_path, token="missing")
+
+    assert profile == {
+        "roles": ["operator"],
+        "scopes": ["operator.read"],
+    }
+    assert missing is None
