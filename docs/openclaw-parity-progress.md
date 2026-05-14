@@ -26222,6 +26222,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py`, and focused `git diff --check`. Source/test
   checkpointed in `a4b1114c`.
 
+- Feishu/Lark native route registration is now exposed in the operator
+  notification route form and receives native gateway send/poll default events,
+  matching the upstream `@openclaw/feishu` channel surface and local
+  Feishu/Lark channel catalog. This closes `OZ-PROV-001HO`; repo-wide parity
+  remains estimated at ~99.9%, and provider-native inbound/outbound breadth
+  moves to ~99.99999981%.
+- Verified Feishu/Lark native route operator UI parity with focused red/green
+  `python -m pytest tests\test_app.py::test_notification_route_operator_form_offers_feishu_native_routes -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent route-form
+  proof `python -m pytest tests\test_app.py -q -k
+  "notification_route_operator_form_offers or
+  gateway_channels_endpoint_classifies_feishu"` (`13 passed, 207 deselected`),
+  `node --check src\openzues\web\static\app.js`, `ruff check
+  src\openzues\web tests\test_app.py`, and focused `git diff --check`.
+  Source/test checkpointed in `5b2c322e`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

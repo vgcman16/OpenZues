@@ -13640,6 +13640,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
   ~99.999999995%. Continue installed plugin activation depth, provider media
   edges, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: Feishu/Lark native route registration is now
+  visible in the operator notification route form and receives the native
+  gateway send/poll default event set. Source/test checkpointed in `5b2c322e`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.99999981%. Continue provider media
+  edges, installed plugin activation depth, packaging/distribution, or
+  companion breadth.
 - Current queue-head adjustment: direct provider-native outbound sends now
   lift `MEDIA:` directives out of visible message text and persist/deliver them
   as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;
