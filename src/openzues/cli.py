@@ -100367,6 +100367,48 @@ def _should_resolve_qr_local_gateway_password_secret(
     return not _has_configured_secret_input(auth_config.get("token"))
 
 
+def _should_resolve_qr_local_gateway_token_secret(
+    config_snapshot: Mapping[str, object] | None,
+) -> bool:
+    if config_snapshot is None:
+        return False
+    if _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_TOKEN")) is not None:
+        return False
+    auth_config = _qr_config_mapping(_qr_gateway_config(config_snapshot).get("auth"))
+    auth_mode = str(auth_config.get("mode") or "").strip().lower()
+    if auth_mode == "token":
+        return True
+    if auth_mode in {"password", "none", "trusted-proxy"}:
+        return False
+    if _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_PASSWORD")) is not None:
+        return False
+    return not _has_configured_secret_input(auth_config.get("password"))
+
+
+def _resolve_qr_local_gateway_token_secret_ref(
+    config_snapshot: Mapping[str, object] | None,
+) -> Mapping[str, object] | None:
+    if config_snapshot is None:
+        return None
+    resolved_snapshot = copy.deepcopy(dict(config_snapshot))
+    gateway = resolved_snapshot.get("gateway")
+    if not isinstance(gateway, dict):
+        return resolved_snapshot
+    auth_config = gateway.get("auth")
+    if not isinstance(auth_config, dict):
+        return resolved_snapshot
+    resolved, ref_label = _resolve_qr_secret_ref_string(
+        resolved_snapshot,
+        value=auth_config.get("token"),
+    )
+    if ref_label is None:
+        return resolved_snapshot
+    if resolved is None:
+        raise ValueError(f"gateway.auth.token SecretRef is unresolved ({ref_label}).")
+    auth_config["token"] = resolved
+    return resolved_snapshot
+
+
 def _resolve_qr_local_gateway_password_secret_ref(
     config_snapshot: Mapping[str, object] | None,
 ) -> Mapping[str, object] | None:
@@ -100728,14 +100770,15 @@ def qr_command(
                 json_output=json_output,
                 setup_code_only=setup_code_only,
             )
-        elif (
-            not str(token or "").strip()
-            and not str(password or "").strip()
-            and _should_resolve_qr_local_gateway_password_secret(config_snapshot)
-        ):
-            config_snapshot = _resolve_qr_local_gateway_password_secret_ref(
-                config_snapshot
-            )
+        elif not str(token or "").strip() and not str(password or "").strip():
+            if _should_resolve_qr_local_gateway_token_secret(config_snapshot):
+                config_snapshot = _resolve_qr_local_gateway_token_secret_ref(
+                    config_snapshot
+                )
+            if _should_resolve_qr_local_gateway_password_secret(config_snapshot):
+                config_snapshot = _resolve_qr_local_gateway_password_secret_ref(
+                    config_snapshot
+                )
         gateway_url, url_source = _resolve_qr_gateway_url(
             app_settings=app_settings,
             url=url,
