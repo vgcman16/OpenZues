@@ -160,7 +160,7 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.99999976%
+- The provider-native inbound/outbound breadth family is estimated at ~99.99999977%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Matrix implicit reply
   fanout, IRC media attachment formatting, Discord multi-media implicit reply
@@ -1567,9 +1567,10 @@ direct send path. Direct media directive parsing now also rejects unsafe
 `http://` remote media sources plus blocked HTTPS hosts/IPs, accepts
 OpenClaw-supported bare filenames with extensions, and strips traversal/home-dir
 local path directives without delivery. Telegram direct sends now lift simple
-safe HTTPS markdown images when the upstream channel adapter opts in; remaining
-media safety parity is markdown-image title/multiple and invalid-target edge
-cases plus any deeper provider-specific media edge cases.
+safe HTTPS markdown images when the upstream channel adapter opts in, including
+balanced-parenthesis URLs, title suffix stripping, multiple images, and invalid
+target retention; remaining media safety parity is deeper provider-specific
+media edge cases.
 Telegram native poll route sends now also forward OpenClaw's multi-select
 intent to Bot API payloads with `allows_multiple_answers`, preserving explicit
 multi-select and default single-choice behavior alongside anonymous, duration,
