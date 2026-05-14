@@ -891,6 +891,55 @@ def test_qr_password_auth_mode_requires_password_before_token_issue(
     assert not (data_dir / "devices" / "bootstrap.json").exists()
 
 
+def test_qr_token_auth_mode_requires_token_before_token_issue(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+    monkeypatch.setenv("OPENCLAW_GATEWAY_PASSWORD", "env-password-1234567890")
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {"mode": "token"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--setup-code-only",
+            "--url",
+            "wss://gateway.example.test:18789",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "Gateway auth is set to token, but no token is configured." in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
 def test_qr_remote_requires_explicit_remote_url_before_token_issue(
     tmp_path, monkeypatch
 ) -> None:
