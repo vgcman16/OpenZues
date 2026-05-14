@@ -6,7 +6,7 @@ Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
   band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- The active gateway/session/tool-contract family is estimated at ~99.969% of the
+- The active gateway/session/tool-contract family is estimated at ~99.970% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.987% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -158,8 +158,8 @@ Current percentage rollup:
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
   infra-runtime, and media-runtime slices.
-- The gateway session/tool-contract family is estimated at ~99.969% after the
-  latest native web-push gateway method slice.
+- The gateway session/tool-contract family is estimated at ~99.970% after the
+  latest plugin-dangerous node command filtering slice.
 - The provider-native inbound/outbound breadth family is estimated at ~99.99999978%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Matrix implicit reply
@@ -13571,6 +13571,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, and packaging/companion breadth returns to ~11.4%.
   Continue companion app device flows, provider media edges,
   packaging/distribution, or ACP lifecycle depth.
+- Current queue-head adjustment: plugin-dangerous node command filtering now
+  matches OpenClaw's `listDangerousPluginNodeCommands()` behavior by removing
+  fakeable plugin-provided dangerous commands from platform defaults until
+  explicitly re-added through `allow_commands`. Source/test checkpointed in
+  `6a6c12c6`; repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.970%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.997%.
+  Continue provider media edges, packaging/distribution, ACP lifecycle depth,
+  or companion breadth.
 - Current queue-head adjustment: direct provider-native outbound sends now
   lift `MEDIA:` directives out of visible message text and persist/deliver them
   as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;

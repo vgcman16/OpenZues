@@ -17,21 +17,47 @@ may lag behind this tracker.
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
 | Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999999999% |
-| Active gateway/session/tool-contract family | ~99.969% | High for bounded local path | Does not mean whole product parity |
+| Active gateway/session/tool-contract family | ~99.970% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
-| Browser/canvas/nodes/voice bounded command family | ~99.996% | High for bounded local path | No longer active queue head |
+| Browser/canvas/nodes/voice bounded command family | ~99.997% | High for bounded local path | No longer active queue head |
 | Provider-native inbound/outbound breadth | ~99.99999978% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Matrix implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, Google Chat add-on body-token webhook ingress, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot structured self-closing media tags, QQBot reply message sequencing, QQBot local media file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot file-media text follow-up delivery, QQBot direct image/video media text follow-up delivery, QQBot inline media text ordering/result metadata, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, safe direct outbound MEDIA/audio-as-voice/reply/reply-current stripping plus current-message resolution, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.99999998% | High for bounded native bridge | ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, installed runtime contribution capture, and plugin helper exact subpaths are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 | Packaging/companion app breadth | ~11.4% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, Zalo/plugin-SDK profile-aware pairing approval commands, pending device-pair queue timestamp stability, changed approval-snapshot supersession, interactive supersession visibility, bootstrap profile bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope warnings, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR SecretRef-template inference, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, QR local token SecretRef resolution, and Windows companion-node command defaults are landed; app-advertised dangerous command probes from `OZ-COMP-001BY` through `OZ-COMP-001CE` are superseded and not counted; companion apps remain mostly open |
 
-Latest verified adjustment: `OZ-COMP-001CF` OpenClaw gateway node command
-policy correction is source/test checkpointed in `e8417d65`, returning
-packaging/companion breadth to ~11.4%. Repo-wide OpenClaw parity remains
+Latest verified adjustment: `OZ-CANVAS-001X` plugin-dangerous node command
+filtering is source/test checkpointed in `6a6c12c6`, moving active
+gateway/session/tool-contract parity to ~99.970% and
+browser/canvas/nodes/voice bounded-command parity to ~99.997%. Repo-wide
+OpenClaw parity remains
 estimated at
 ~99.9%.
 
 ## Implemented / Locked Bounded Areas
+
+- [x] `OZ-CANVAS-001X` plugin-dangerous node command filtering.
+  - Source:
+    `openclaw-main/src/gateway/node-command-policy.ts`,
+    `openclaw-main/src/gateway/node-invoke-plugin-policy.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_command_policy.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_command_policy.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: plugin-provided dangerous node commands are removed from
+    gateway platform defaults until explicitly re-added through
+    `allow_commands`, and `node.invoke` sees that filtered policy.
+  - Evidence required: focused policy proof, focused node.invoke proof,
+    adjacent tests, ruff, mypy
+  - Status: checkpointed in `6a6c12c6`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_command_policy.py::test_plugin_dangerous_node_commands_filter_defaults_until_explicitly_allowed -q`
+    (`TypeError` before implementation, then `1 passed`) and
+    `python -m pytest tests\test_gateway_node_methods.py::test_node_invoke_filters_dangerous_plugin_node_command_defaults -q`
+    (`TypeError` before implementation, then `1 passed`), adjacent policy
+    proof (`8 passed`), adjacent node-method proof (`3 passed, 1304
+    deselected`), ruff, mypy, and focused `git diff --check`.
 
 - [x] `OZ-COMP-001CF` OpenClaw gateway node command policy correction.
   - Source:

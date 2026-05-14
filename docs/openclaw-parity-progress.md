@@ -4,9 +4,9 @@
 
 - Updated: 2026-05-14.
 - Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- Estimated active gateway/session/tool-contract family parity: ~99.969% for the bounded local OpenZues path.
+- Estimated active gateway/session/tool-contract family parity: ~99.970% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~99.987% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `artifacts.list` / `artifacts.get` / `artifacts.download`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
-- Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.996%;
+- Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.997%;
   it is no longer the active queue head.
 - Estimated packaging/companion app breadth: ~11.4% after QR setup-code
   safety/SecretRef slices, local QR token/password SecretRef resolution,
@@ -26055,6 +26055,29 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_command_policy.py`, `mypy
   src\openzues\services\gateway_node_command_policy.py`, and focused
   `git diff --check`.
+
+- Gateway node command policy now accepts a fakeable dangerous plugin command
+  inventory and removes those commands from platform defaults until they are
+  explicitly re-added through `allow_commands`, matching OpenClaw's
+  `listDangerousPluginNodeCommands()` behavior for plugin node-host commands
+  and node-invoke policies. `GatewayNodeMethodService` carries the inventory
+  through node list/describe, pairing-scope upgrade checks, browser proxy, and
+  `node.invoke`. This closes `OZ-CANVAS-001X`; repo-wide parity remains
+  estimated at ~99.9%, active gateway/session/tool-contract parity moves to
+  ~99.970%, and browser/canvas/nodes/voice bounded-command parity moves to
+  ~99.997%.
+- Verified plugin-dangerous node command filtering with focused red/green
+  `python -m pytest tests\test_gateway_node_command_policy.py::test_plugin_dangerous_node_commands_filter_defaults_until_explicitly_allowed -q`
+  (`TypeError` before implementation, then `1 passed`) and
+  `python -m pytest tests\test_gateway_node_methods.py::test_node_invoke_filters_dangerous_plugin_node_command_defaults -q`
+  (`TypeError` before implementation, then `1 passed`), adjacent policy proof
+  `python -m pytest tests\test_gateway_node_command_policy.py -q` (`8
+  passed`), adjacent node-method proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "dangerous_plugin_node_command or
+  plugin_node_host_commands or
+  node_invoke_rejects_system_exec_approvals_namespace_before_wake_attempt"`
+  (`3 passed, 1304 deselected`), ruff, mypy, and focused `git diff --check`.
+  Source/test checkpointed in `6a6c12c6`.
 
 ## References
 
