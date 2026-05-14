@@ -8,10 +8,11 @@
 - Estimated chat/session contract subfamily parity: ~99.987% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `artifacts.list` / `artifacts.get` / `artifacts.download`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.995%;
   it is no longer the active queue head.
-- Estimated packaging/companion app breadth: ~9.4% after QR setup-code
+- Estimated packaging/companion app breadth: ~9.5% after QR setup-code
   safety/SecretRef slices, local QR token/password SecretRef resolution,
   explicit-auth hard-requirement parity,
-  bind/remote/public URL derivation and validation, device pairing CLI
+  bind/remote/public URL derivation and validation, custom-loopback bind
+  parity, device pairing CLI
   list/approve/mutation coverage, approve preview gateway/auth flag
   preservation, remote device dispatch, configured remote defaults, loopback
   pairing-required fallback, approval-state preview metadata, terminal QR
@@ -25214,6 +25215,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_cli.py -q -k "qr_"` (`32 passed, 616 deselected`), `ruff check
   src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `5ca11f09`.
+
+- Native `openzues qr` now allows explicit `gateway.bind=custom` loopback
+  hosts such as `127.0.0.1`, matching OpenClaw's `resolveGatewayBindUrl`
+  contract while preserving the implicit loopback fallback error for
+  unconfigured bind URLs. This closes `OZ-COMP-001BF`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to ~9.5%.
+- Verified QR custom loopback bind parity with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_allows_explicit_custom_loopback_bind_host -q`
+  (`1 failed` before implementation because the custom bind hit the loopback
+  preflight, then `1 passed`), adjacent QR CLI proof `python -m pytest
+  tests\test_cli.py -q -k "qr_"` (`33 passed, 616 deselected`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `8b546000`.
 
 ## References
 

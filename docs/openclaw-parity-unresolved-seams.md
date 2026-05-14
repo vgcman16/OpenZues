@@ -13302,3 +13302,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   packaging/companion breadth moves to ~9.4%. Continue companion-app device
   flows, packaging/distribution, ACP lifecycle, provider action breadth, or
   setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now allows explicit
+  `gateway.bind=custom` loopback hosts while keeping the implicit loopback
+  fallback preflight. Source/test checkpointed in `8b546000`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to ~9.5%.
+  Continue companion-app device flows, packaging/distribution, ACP lifecycle,
+  provider action breadth, or setup/onboarding gaps.
