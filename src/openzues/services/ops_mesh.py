@@ -13150,6 +13150,7 @@ def _normalize_direct_channel_media_urls(
 
 _DIRECT_CHANNEL_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 _DIRECT_CHANNEL_FILE_EXT_RE = re.compile(r"\.\w{1,10}$")
+_DIRECT_CHANNEL_TRAVERSAL_SEGMENT_RE = re.compile(r"(?:^|[/\\])\.\.(?:[/\\]|$)")
 
 
 def _looks_like_direct_channel_media_source(value: str) -> bool:
@@ -13158,11 +13159,28 @@ def _looks_like_direct_channel_media_source(value: str) -> bool:
         return False
     if re.match(r"(?i)^https?://", candidate):
         return _direct_channel_remote_media_url_allowed(candidate)
+    if _direct_channel_media_source_has_traversal_or_home_prefix(candidate):
+        return False
     if re.match(r"(?i)^(file://|/|[a-z]:[\\/]|\\\\|\.{1,2}/|~)", candidate):
         return True
     if _direct_channel_bare_media_filename_allowed(candidate):
         return True
     return ("/" in candidate or "\\" in candidate) and "." in candidate
+
+
+def _direct_channel_media_source_has_traversal_or_home_prefix(candidate: str) -> bool:
+    return (
+        candidate.startswith("../")
+        or candidate == ".."
+        or candidate.startswith("~")
+        or _DIRECT_CHANNEL_TRAVERSAL_SEGMENT_RE.search(candidate) is not None
+    )
+
+
+def _direct_channel_media_source_is_rejected_local_path(candidate: str) -> bool:
+    return not _DIRECT_CHANNEL_SCHEME_RE.match(
+        candidate
+    ) and _direct_channel_media_source_has_traversal_or_home_prefix(candidate)
 
 
 def _direct_channel_bare_media_filename_allowed(candidate: str) -> bool:
@@ -13280,6 +13298,11 @@ def _split_direct_channel_media_directives(
             if _looks_like_direct_channel_media_source(candidate)
         ]
         if not valid_candidates:
+            if any(
+                _direct_channel_media_source_is_rejected_local_path(candidate)
+                for candidate in candidates
+            ):
+                continue
             kept_lines.append(line)
             continue
         media_urls.extend(valid_candidates)
