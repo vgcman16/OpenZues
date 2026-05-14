@@ -15,7 +15,7 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999997% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999999% after the
   runtime bridge doctor posture, native ACP client interactive replay, ACP
   persisted task-record child-cap counting, ACP `streamTo="parent"`
   requester-context preflight, ACP `resumeSessionId` requester-context
@@ -157,7 +157,7 @@ Current percentage rollup:
   outbound-media, delivery-queue-runtime, migration-runtime, migration helper,
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
-  infra-runtime, and media-runtime slices.
+  infra-runtime, media-runtime, and package-channel command metadata slices.
 - The gateway session/tool-contract family is estimated at ~99.970% after the
   latest plugin-dangerous node command filtering slice.
 - The provider-native inbound/outbound breadth family is estimated at ~99.99999979%
@@ -13588,6 +13588,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~99.9%, and provider-native inbound/outbound breadth moves to
   ~99.99999979%. Continue provider media edges, packaging/distribution,
   installed plugin activation, or companion breadth.
+- Current queue-head adjustment: installed/plugin package manifest channel
+  metadata now preserves OpenClaw-style `openclaw.channel.commands` defaults
+  and merges them into the matching `channelConfigs` entry. Source/test
+  checkpointed in `ce9eeaf8`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor native-bridge parity moves to ~99.99999999%.
+  Continue packaging/distribution, installed plugin activation depth, provider
+  media edges, or companion breadth.
 - Current queue-head adjustment: direct provider-native outbound sends now
   lift `MEDIA:` directives out of visible message text and persist/deliver them
   as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;
