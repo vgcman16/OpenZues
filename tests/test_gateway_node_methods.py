@@ -35449,6 +35449,92 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_pairing_reply_uses_profile_hint(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    monkeypatch.delenv("OPENCLAW_CONTAINER_HINT", raising=False)
+    monkeypatch.setenv("OPENCLAW_PROFILE", "isolated")
+    runtime_entry = tmp_path / "runtime-plugin-pairing-reply.cjs"
+    runtime_entry.write_text(
+        """
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.pairing_reply",
+      description: "Use OpenClaw pairing reply helper",
+      parameters: { type: "object" },
+      async execute() {
+        return {
+          text: genericSdk.buildPairingReply({
+            channel: "demo",
+            idLine: "Demo ID: room-1",
+            code: "ABC123"
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "pairing-reply-runtime-plugin",
+                    "name": "Pairing Reply Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-pairing-reply-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.pairing_reply"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.pairing_reply"})
+
+    assert payload["ok"] is True
+    text = payload["result"]["text"]
+    approve_command = "openclaw --profile isolated pairing approve demo ABC123"
+    assert text.count(approve_command) == 2
+    assert "openclaw pairing approve demo ABC123" not in text
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_session_binding_and_key_runtime_helpers(
     tmp_path,
 ) -> None:

@@ -39868,7 +39868,9 @@ async function readChannelAllowFromStore(channel, env = process.env, accountId) 
 }
 
 function buildPairingReply(params) {
-  const approveCommand = `openclaw pairing approve ${params.channel} ${params.code}`;
+  const approveCommand = formatOpenClawCliCommand(
+    `openclaw pairing approve ${params.channel} ${params.code}`,
+  );
   return [
     "OpenClaw: access not configured.",
     "",
