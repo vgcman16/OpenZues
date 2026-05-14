@@ -11634,6 +11634,122 @@ async def test_ops_mesh_service_send_lifts_telegram_markdown_image_with_parenthe
     assert delivery["event_payload"]["mediaUrls"] == ["https://example.com/a_(1).png"]
 
 
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_lifts_telegram_markdown_image_title_and_multiple(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-md-multiple"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-md-multiple-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message=(
+            'Before ![chart](https://example.com/chart.png "Quarterly chart")\n'
+            "Middle\n"
+            "![two](https://example.com/two.png)"
+        ),
+        idempotency_key="idem-telegram-md-multiple-directive-send",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(provider_requests) == 1
+    assert provider_requests[0].message == "Before\nMiddle"
+    assert provider_requests[0].media_urls == (
+        "https://example.com/chart.png",
+        "https://example.com/two.png",
+    )
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == "Before\nMiddle"
+    assert "mediaUrl" not in delivery["event_payload"]
+    assert delivery["event_payload"]["mediaUrls"] == [
+        "https://example.com/chart.png",
+        "https://example.com/two.png",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("message", "idempotency_key"),
+    [
+        ("Caption ![x](http://example.com/a.png)", "idem-telegram-md-invalid-http"),
+        ("Caption ![x](file:///etc/passwd)", "idem-telegram-md-invalid-file"),
+        ("Caption ![x](https://127.0.0.1/a.png)", "idem-telegram-md-invalid-localhost"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_keeps_invalid_telegram_markdown_images_as_text(
+    message: str,
+    idempotency_key: str,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-md-invalid"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-md-invalid-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message=message,
+        idempotency_key=idempotency_key,
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(provider_requests) == 1
+    assert provider_requests[0].message == message
+    assert provider_requests[0].media_urls == ()
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == message
+    assert "mediaUrl" not in delivery["event_payload"]
+    assert "mediaUrls" not in delivery["event_payload"]
+
+
 @pytest.mark.parametrize(
     ("media_directive", "idempotency_key"),
     [
@@ -26849,6 +26965,129 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_mattermost_nati
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_mattermost_react_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-mattermost-react"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Mattermost Native Provider",
+        kind="mattermost",
+        target="https://mattermost.example.com",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="mattermost-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "mattermost",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "channel:dthcxgoxhifn3pwh65cut3ud3w",
+        },
+    )
+    calls: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        calls.append((method, target, payload, secret_header_name, secret_token))
+        if target == "https://mattermost.example.com/api/v4/users/me":
+            return {"id": "bot-user"}
+        if target == "https://mattermost.example.com/api/v4/reactions":
+            return {"status": "ok"}
+        if (
+            target
+            == "https://mattermost.example.com/api/v4/users/bot-user/posts/post-123/reactions/thumbsup"
+        ):
+            return {"status": 200}
+        raise AssertionError(f"unexpected Mattermost target: {target}")
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    added = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="mattermost",
+            action="react",
+            params={"messageId": "post-123", "emoji": ":thumbsup:"},
+            account_id="default",
+            idempotency_key="idem-mattermost-react-add",
+        )
+    )
+    removed = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="mattermost",
+            action="react",
+            params={"postId": "post-123", "emoji": "thumbsup", "remove": True},
+            account_id="default",
+            idempotency_key="idem-mattermost-react-remove",
+        )
+    )
+
+    assert added == {"ok": True, "added": "thumbsup"}
+    assert removed == {"ok": True, "removed": "thumbsup"}
+    assert calls == [
+        (
+            "GET",
+            "https://mattermost.example.com/api/v4/users/me",
+            None,
+            "Authorization",
+            "Bearer mattermost-bot-token",
+        ),
+        (
+            "POST",
+            "https://mattermost.example.com/api/v4/reactions",
+            {
+                "user_id": "bot-user",
+                "post_id": "post-123",
+                "emoji_name": "thumbsup",
+            },
+            "Authorization",
+            "Bearer mattermost-bot-token",
+        ),
+        (
+            "GET",
+            "https://mattermost.example.com/api/v4/users/me",
+            None,
+            "Authorization",
+            "Bearer mattermost-bot-token",
+        ),
+        (
+            "DELETE",
+            "https://mattermost.example.com/api/v4/users/bot-user/posts/post-123/reactions/thumbsup",
+            None,
+            "Authorization",
+            "Bearer mattermost-bot-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_msteams_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -36833,6 +37072,105 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_zalo_media(
         "zalo-photo-1",
         "zalo-photo-2",
     ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_handle_googlechat_webhook_delivers_addon_message(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "googlechat-session-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_googlechat_webhook(
+        {
+            "commonEventObject": {"hostApp": "CHAT"},
+            "authorizationEventObject": {"systemIdToken": "addon-token"},
+            "chat": {
+                "eventTime": "2026-03-02T00:00:00.000Z",
+                "user": {
+                    "name": "users/12345",
+                    "displayName": "Test User",
+                    "email": "test@example.com",
+                },
+                "messagePayload": {
+                    "space": {
+                        "name": "spaces/AAA",
+                        "type": "ROOM",
+                        "displayName": "Ops Room",
+                    },
+                    "message": {
+                        "name": "spaces/AAA/messages/msg-1",
+                        "text": "Hello from add-on",
+                        "thread": {"name": "spaces/AAA/threads/thread-1"},
+                    },
+                },
+            },
+        },
+        account_id="workspace",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="googlechat",
+        account_id="workspace",
+        peer_kind="channel",
+        peer_id="googlechat:spaces/AAA",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "Hello from add-on")]
+    assert result == {
+        "ok": True,
+        "channel": "googlechat",
+        "accountId": "workspace",
+        "eventType": "MESSAGE",
+        "eventCount": 1,
+        "deliveredCount": 1,
+        "deliveries": [
+            {
+                "eventType": "MESSAGE",
+                "messageId": "googlechat-session-message-1",
+                "inboundMessageId": "spaces/AAA/messages/msg-1",
+                "timestamp": 1772409600000,
+                "sessionKey": expected_session_key,
+                "text": "Hello from add-on",
+                "senderId": "users/12345",
+                "senderName": "Test User",
+                "conversationId": "spaces/AAA",
+                "conversationType": "channel",
+                "conversationTarget": expected_target.model_dump(mode="json"),
+                "reply": {
+                    "to": "googlechat:spaces/AAA",
+                    "originatingTo": "googlechat:spaces/AAA",
+                    "replyToId": "spaces/AAA/threads/thread-1",
+                    "replyToIdFull": "spaces/AAA/threads/thread-1",
+                },
+                "delivery": {"runtime": "session-backed"},
+            }
+        ],
+    }
 
 
 @pytest.mark.asyncio

@@ -84,8 +84,17 @@ def resolve_configured_channel_plugin_plan(
     *,
     plugins: Iterable[Mapping[str, object]],
     config: Mapping[str, object],
+    only_channel_ids: Iterable[str] | None = None,
 ) -> dict[str, object]:
     channel_ids = _configured_channel_ids(config)
+    if only_channel_ids is not None:
+        configured_channel_ids = set(channel_ids)
+        channel_ids = _dedupe(
+            channel_id
+            for candidate in only_channel_ids
+            if (channel_id := _normalize_command_id(candidate))
+            and channel_id in configured_channel_ids
+        )
     plugin_rows = tuple(plugins)
     plugins_by_id = {
         plugin_id: plugin

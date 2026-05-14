@@ -17,19 +17,487 @@ may lag behind this tracker.
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
 | Repo-wide OpenClaw parity | ~99.9% | Medium | Breadth-weighted planning estimate, not generated metric; evidence band ~80-99.99999999999999999999999999999999999999999999999999% |
-| Active gateway/session/tool-contract family | ~99.969% | High for bounded local path | Does not mean whole product parity |
+| Active gateway/session/tool-contract family | ~99.970% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~99.987% | High for bounded local path | Current local session/chat contracts are near complete; transcript artifact methods are checkpointed |
-| Browser/canvas/nodes/voice bounded command family | ~99.995% | High for bounded local path | No longer active queue head |
-| Provider-native inbound/outbound breadth | ~99.99999976% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Matrix implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot structured self-closing media tags, QQBot reply message sequencing, QQBot local media file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot file-media text follow-up delivery, QQBot direct image/video media text follow-up delivery, QQBot inline media text ordering/result metadata, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, safe direct outbound MEDIA/audio-as-voice/reply/reply-current stripping plus current-message resolution, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
-| Runtime/CLI/doctor native bridge | ~99.99999997% | High for bounded native bridge | ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
+| Browser/canvas/nodes/voice bounded command family | ~99.997% | High for bounded local path | No longer active queue head |
+| Provider-native inbound/outbound breadth | ~99.99999981% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout and operator route registration, Matrix implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, Google Chat add-on body-token webhook ingress, Mattermost native reaction actions, Tlon operator route registration, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot structured self-closing media tags, QQBot reply message sequencing, QQBot local media file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot file-media text follow-up delivery, QQBot direct image/video media text follow-up delivery, QQBot inline media text ordering/result metadata, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, safe direct outbound MEDIA/audio-as-voice/reply/reply-current stripping plus current-message resolution, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
+| Runtime/CLI/doctor native bridge | ~99.999999996% | High for bounded native bridge | ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice, logs broken-pipe handling, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, installed runtime contribution capture, plugin helper exact subpaths, package channel command metadata, package-prefixed update tag normalization, non-OpenZues git-root update rejection, channel plugin runtime activation entries, channel plugin activation source config, and channel-scoped activation filters are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
-| Packaging/companion app breadth | ~11.4% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, Zalo/plugin-SDK profile-aware pairing approval commands, pending device-pair queue timestamp stability, changed approval-snapshot supersession, interactive supersession visibility, bootstrap profile bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope warnings, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR SecretRef-template inference, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, QR local token SecretRef resolution, and Windows companion-node command defaults are landed; companion apps remain mostly open |
+| Packaging/companion app breadth | ~11.4% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, Zalo/plugin-SDK profile-aware pairing approval commands, pending device-pair queue timestamp stability, changed approval-snapshot supersession, interactive supersession visibility, bootstrap profile bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope warnings, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR SecretRef-template inference, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, QR local token SecretRef resolution, and Windows companion-node command defaults are landed; app-advertised dangerous command probes from `OZ-COMP-001BY` through `OZ-COMP-001CE` are superseded and not counted; companion apps remain mostly open |
 
-Latest verified adjustment: `OZ-PROV-001HJ` Telegram markdown-image balanced URL
-extraction moves provider-native inbound/outbound breadth to ~99.99999976%;
-repo-wide OpenClaw parity remains estimated at ~99.9%.
+Latest verified adjustment: `OZ-PLUGIN-00387` channel-scoped activation
+filtering is source/test checkpointed in `596771d6`, moving runtime/CLI/doctor
+native-bridge parity to ~99.999999996%. Repo-wide OpenClaw parity remains
+estimated at ~99.9%.
 
 ## Implemented / Locked Bounded Areas
+
+- [x] `OZ-PLUGIN-00387` channel-scoped activation filtering.
+  - Source:
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.test.ts`,
+    `openclaw-main/src/plugins/channel-presence-policy.ts`
+  - References: Hermes/Warp `none`
+  - Target:
+    `src/openzues/services/gateway_plugin_activation.py`,
+    `tests/test_gateway_plugin_activation.py`
+  - Contract: configured-channel activation can be narrowed to explicit
+    channel IDs before plugin owner discovery, entries, and activation config
+    are built.
+  - Evidence required: focused activation proof, adjacent activation proof,
+    ruff, mypy
+  - Status: checkpointed in `596771d6`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_plugin_activation.py::test_resolve_configured_channel_plugin_plan_filters_explicit_channel_scope -q`
+    (`unexpected keyword argument 'only_channel_ids'` before implementation,
+    then `1 passed`), adjacent activation proof (`10 passed`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] `OZ-PROV-001HO` Feishu/Lark operator route registration.
+  - Source:
+    `openclaw-main/extensions/feishu/package.json`,
+    `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/channel.test.ts`,
+    `openclaw-main/extensions/feishu/src/outbound.test.ts`
+  - References: Hermes/Warp `none`
+  - Target:
+    `src/openzues/web/templates/index.html`,
+    `src/openzues/web/static/app.js`,
+    `tests/test_app.py`
+  - Contract: the operator notification route form exposes Feishu/Lark native
+    routes and assigns the native gateway send/poll default event set.
+  - Evidence required: focused route form proof, adjacent route form proof,
+    JS parse check, ruff
+  - Status: checkpointed in `5b2c322e`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_app.py::test_notification_route_operator_form_offers_feishu_native_routes -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent route form
+    proof (`13 passed, 207 deselected`), `node --check`, ruff, and focused
+    `git diff --check`.
+
+- [x] `OZ-PKG-001DM` logs broken-pipe handling.
+  - Source:
+    `openclaw-main/src/cli/logs-cli.ts`,
+    `openclaw-main/src/cli/logs-cli.test.ts`,
+    `openclaw-main/src/terminal/stream-writer.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: log tail output stops cleanly when stdout closes and emits
+    `output stdout closed (EPIPE). Stopping tail.` to stderr.
+  - Evidence required: focused logs proof, adjacent logs proof, ruff, mypy
+  - Status: checkpointed in `a4b1114c`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_logs_plain_warns_when_stdout_pipe_closes -q`
+    (`SystemExit(1)` before implementation, then `1 passed`), adjacent logs
+    proof (`5 passed, 654 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] `OZ-PLUGIN-00386` channel plugin activation source config.
+  - Source:
+    `openclaw-main/src/plugins/activation-context.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `activationSourceConfig` receives configured-channel owner plugin
+    activation metadata in `plugins.allow` and `plugins.entries[id].enabled`
+    before the installed plugin runtime activation adapter runs.
+  - Evidence required: focused plugin doctor proof, adjacent plugin runtime
+    proof, ruff, mypy
+  - Status: checkpointed in `2e8f212c`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py -q -k "plugins_doctor_json_activation_adapter_receives_resolved_auto_enabled_config"`
+    (`activationSourceConfig.plugins.allow` stayed empty before implementation,
+    then `1 passed, 657 deselected`), adjacent plugin runtime proof (`5 passed,
+    653 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00385` channel plugin runtime activation entries.
+  - Source:
+    `openclaw-main/src/plugins/activation-context.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: auto-enabled configured-channel owner plugin IDs are projected
+    into both `plugins.allow` and `plugins.entries[id].enabled` before the
+    installed plugin runtime activation adapter runs.
+  - Evidence required: focused plugin doctor proof, adjacent plugin runtime
+    proof, ruff, mypy
+  - Status: checkpointed in `30870984`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py -q -k "plugins_doctor_json_activation_adapter_receives_resolved_auto_enabled_config"`
+    (`entries` absent before implementation, then `1 passed, 657
+    deselected`), adjacent plugin runtime proof (`5 passed, 653 deselected`),
+    ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-PKG-001DL` non-OpenZues git-root update rejection.
+  - Source:
+    `openclaw-main/src/infra/update-runner.ts`,
+    `openclaw-main/src/infra/update-runner.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues update --json --yes` rejects git roots whose
+    `package.json` identifies a different package before calling the runtime
+    update service, returning `reason: "not-openclaw-root"`.
+  - Evidence required: focused update proof, adjacent update proof, ruff, mypy
+  - Status: checkpointed in `7e60f84a`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_json_rejects_non_openzues_git_root_before_runtime -q`
+    (`run_update` was called before implementation, then `1 passed`),
+    adjacent update proof (`5 passed, 653 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] `OZ-PROV-001HN` Tlon operator route registration.
+  - Source:
+    `openclaw-main/extensions/tlon/package.json`,
+    `openclaw-main/extensions/tlon/src/channel.ts`,
+    `openclaw-main/extensions/tlon/src/core.test.ts`
+  - References: Hermes/Warp `none`
+  - Target:
+    `src/openzues/web/templates/index.html`,
+    `src/openzues/web/static/app.js`,
+    `tests/test_app.py`
+  - Contract: the operator notification route form exposes `tlon` using
+    OpenClaw's `Tlon (Urbit)` selection label, and the route kind receives the
+    native gateway send/poll default event set.
+  - Evidence required: focused operator form proof, adjacent native route form
+    proof, JS parse check, ruff
+  - Status: checkpointed in `5d035d5a`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_app.py::test_notification_route_operator_form_offers_tlon_native_routes -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent form proof
+    (`12 passed, 207 deselected`), `node --check`, ruff, and focused
+    `git diff --check`; mypy was not applicable because no Python web source
+    modules were touched.
+
+- [x] `OZ-PKG-001DK` package-prefixed update tag normalization.
+  - Source:
+    `openclaw-main/src/infra/package-tag.ts`,
+    `openclaw-main/src/infra/package-tag.test.ts`,
+    `openclaw-main/src/cli/update-cli/shared.ts`,
+    `openclaw-main/src/infra/update-runner.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues update --tag openzues@beta` normalizes the registry
+    lookup target to `beta` and constructs exactly `openzues@beta` for the
+    package-manager install spec.
+  - Evidence required: focused update dry-run proof, adjacent update dry-run
+    proof, ruff, mypy
+  - Status: checkpointed in `c2211ffb`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_update_dry_run_json_normalizes_package_name_prefixed_tag -q`
+    (`openzues@openzues@beta` before implementation, then `1 passed`),
+    adjacent update proof (`5 passed, 652 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] `OZ-PLUGIN-00384` package channel command metadata.
+  - Source:
+    `openclaw-main/src/plugins/manifest-registry-installed.ts`,
+    `openclaw-main/src/plugins/manifest-registry.ts`,
+    `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/manifest-registry-installed.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: package `openclaw.channel.commands` boolean defaults are
+    preserved in `channelCatalogMeta.commands` and merged into the matching
+    `channelConfigs[channelId].commands` when the manifest does not already
+    define command defaults.
+  - Evidence required: focused plugin list proof, adjacent plugin manifest
+    proof, ruff, mypy
+  - Status: checkpointed in `ce9eeaf8`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_plugins_list_json_preserves_package_manifest_runtime_metadata -q`
+    (`commands` absent before implementation, then `1 passed`), adjacent
+    plugin manifest proof (`3 passed, 653 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] `OZ-PROV-001HM` Mattermost native reaction actions.
+  - Source:
+    `openclaw-main/extensions/mattermost/src/channel.ts`,
+    `openclaw-main/extensions/mattermost/src/mattermost/reactions.ts`,
+    `openclaw-main/extensions/mattermost/src/mattermost/reactions.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: `message.action react` for Mattermost accepts `messageId` or
+    `postId`, trims colon-wrapped emoji names, resolves the bot user through
+    `/api/v4/users/me`, and dispatches add/remove native reaction mutations.
+  - Evidence required: focused OpsMesh proof, adjacent Mattermost provider
+    proof, ruff, mypy
+  - Status: checkpointed in `1f2783fa`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_mattermost_react_route -q`
+    (`None` before implementation, then `1 passed`), adjacent provider proof
+    (`3 passed, 526 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-CANVAS-001X` plugin-dangerous node command filtering.
+  - Source:
+    `openclaw-main/src/gateway/node-command-policy.ts`,
+    `openclaw-main/src/gateway/node-invoke-plugin-policy.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_command_policy.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `tests/test_gateway_node_command_policy.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: plugin-provided dangerous node commands are removed from
+    gateway platform defaults until explicitly re-added through
+    `allow_commands`, and `node.invoke` sees that filtered policy.
+  - Evidence required: focused policy proof, focused node.invoke proof,
+    adjacent tests, ruff, mypy
+  - Status: checkpointed in `6a6c12c6`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_command_policy.py::test_plugin_dangerous_node_commands_filter_defaults_until_explicitly_allowed -q`
+    (`TypeError` before implementation, then `1 passed`) and
+    `python -m pytest tests\test_gateway_node_methods.py::test_node_invoke_filters_dangerous_plugin_node_command_defaults -q`
+    (`TypeError` before implementation, then `1 passed`), adjacent policy
+    proof (`8 passed`), adjacent node-method proof (`3 passed, 1304
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001CF` OpenClaw gateway node command policy correction.
+  - Source:
+    `openclaw-main/src/gateway/node-command-policy.ts`,
+    `openclaw-main/src/gateway/gateway-misc.test.ts`,
+    `openclaw-main/src/gateway/server-methods/nodes.ts`,
+    `openclaw-main/src/gateway/server-methods/exec-approvals.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_command_policy.py`,
+    `tests/test_gateway_node_command_policy.py`
+  - Contract: gateway node command defaults match OpenClaw's safe
+    platform allowlists; app-advertised dangerous actions remain gated by
+    explicit allowlist or dedicated gateway methods such as
+    `exec.approvals.node.*`.
+  - Evidence required: focused command-policy red/green proof, adjacent
+    command-policy proof, ruff, mypy
+  - Status: checkpointed in `e8417d65`
+  - Weight: 1 correction, no positive parity credit
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_command_policy.py -q` (`4
+    failed` before implementation because dangerous commands were default
+    allowed, then `7 passed`), ruff, mypy, and focused `git diff --check`.
+
+- [ ] `OZ-COMP-001CE` macOS companion screen recording command policy
+  (superseded; app-advertisement probe, not counted as gateway default parity).
+  - Source:
+    `openclaw-main/apps/macos/Sources/OpenClaw/NodeMode/MacNodeModeCoordinator.swift`,
+    `openclaw-main/apps/macos/Sources/OpenClaw/NodeMode/MacNodeScreenCommands.swift`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_command_policy.py`,
+    `tests/test_gateway_node_command_policy.py`
+  - Contract: nodes resolved as macOS include upstream `screen.record` in the
+    default allowlist so declared macOS companion screen commands survive
+    normalization, while Windows/Linux keep their default denial.
+  - Evidence required: focused macOS screen-command allowlist proof, adjacent
+    command-policy proof, ruff, mypy
+  - Status: superseded by `OZ-COMP-001CF`; not counted
+  - Weight: 0
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_command_policy.py::test_macos_allowlist_includes_openclaw_screen_commands -q`
+    (`1 failed` before implementation because `screen.record` was absent,
+    then `1 passed`), adjacent policy proof `python -m pytest
+    tests\test_gateway_node_command_policy.py -q` (`9 passed`), ruff, mypy,
+    and focused `git diff --check`.
+
+- [ ] `OZ-COMP-001CD` macOS companion camera action command policy
+  (superseded; app-advertisement probe, not counted as gateway default parity).
+  - Source:
+    `openclaw-main/apps/macos/Sources/OpenClaw/NodeMode/MacNodeModeCoordinator.swift`,
+    `openclaw-main/apps/shared/OpenClawKit/Sources/OpenClawKit/CameraCommands.swift`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_command_policy.py`,
+    `tests/test_gateway_node_command_policy.py`
+  - Contract: nodes resolved as macOS include upstream camera capability
+    actions `camera.snap` and `camera.clip` in the default allowlist so
+    declared macOS companion camera commands survive normalization.
+  - Evidence required: focused macOS camera-action allowlist proof, adjacent
+    command-policy proof, ruff, mypy
+  - Status: superseded by `OZ-COMP-001CF`; not counted
+  - Weight: 0
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_command_policy.py::test_macos_allowlist_includes_openclaw_camera_action_commands -q`
+    (`1 failed` before implementation because `camera.snap` was absent, then
+    `1 passed`), adjacent policy proof `python -m pytest
+    tests\test_gateway_node_command_policy.py -q` (`9 passed`), ruff, mypy,
+    and focused `git diff --check`.
+
+- [ ] `OZ-COMP-001CC` macOS companion exec-approval command policy
+  (superseded; direct `node.invoke` default is gated upstream).
+  - Source:
+    `openclaw-main/apps/macos/Sources/OpenClaw/NodeMode/MacNodeModeCoordinator.swift`,
+    `openclaw-main/apps/shared/OpenClawKit/Sources/OpenClawKit/SystemCommands.swift`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_command_policy.py`,
+    `tests/test_gateway_node_command_policy.py`
+  - Contract: nodes resolved as macOS include upstream
+    `system.execApprovals.get` and `system.execApprovals.set` in the default
+    allowlist so declared macOS companion commands survive normalization,
+    without widening Windows/Linux command defaults.
+  - Evidence required: focused macOS exec-approval allowlist proof, adjacent
+    command-policy proof, ruff, mypy
+  - Status: superseded by `OZ-COMP-001CF`; not counted
+  - Weight: 0
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_command_policy.py::test_macos_allowlist_includes_openclaw_exec_approval_commands -q`
+    (`1 failed` before implementation because `system.execApprovals.get` was
+    absent, then `1 passed`), adjacent policy proof `python -m pytest
+    tests\test_gateway_node_command_policy.py -q` (`8 passed`), ruff, mypy,
+    and focused `git diff --check`.
+
+- [ ] `OZ-COMP-001CB` Android companion action command policy
+  (superseded; dangerous actions are not gateway defaults upstream).
+  - Source:
+    `openclaw-main/apps/android/app/src/main/java/ai/openclaw/app/protocol/OpenClawProtocolConstants.kt`,
+    `openclaw-main/apps/android/app/src/main/java/ai/openclaw/app/node/InvokeCommandRegistry.kt`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_command_policy.py`,
+    `tests/test_gateway_node_command_policy.py`
+  - Contract: nodes resolved as Android include upstream action commands
+    `camera.snap`, `camera.clip`, `contacts.add`, `calendar.add`,
+    `sms.send`, and `sms.search` in the default allowlist so declared Android
+    companion commands survive normalization.
+  - Evidence required: focused Android action-command allowlist proof, adjacent
+    command-policy proof, ruff, mypy
+  - Status: superseded by `OZ-COMP-001CF`; not counted
+  - Weight: 0
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_command_policy.py::test_android_allowlist_includes_openclaw_action_command_defaults -q`
+    (`1 failed` before implementation because `camera.snap` was absent, then
+    `1 passed`), adjacent policy proof `python -m pytest
+    tests\test_gateway_node_command_policy.py -q` (`7 passed`), ruff, mypy,
+    and focused `git diff --check`.
+
+- [ ] `OZ-COMP-001CA` iOS companion capability command policy
+  (superseded; app-advertisement probe, not counted as gateway default parity).
+  - Source:
+    `openclaw-main/apps/ios/Sources/Gateway/GatewayConnectionController.swift`,
+    `openclaw-main/apps/shared/OpenClawKit/Sources/OpenClawKit/CameraCommands.swift`,
+    `openclaw-main/apps/shared/OpenClawKit/Sources/OpenClawKit/WatchCommands.swift`,
+    `openclaw-main/apps/shared/OpenClawKit/Sources/OpenClawKit/ContactsCommands.swift`,
+    `openclaw-main/apps/shared/OpenClawKit/Sources/OpenClawKit/CalendarCommands.swift`,
+    `openclaw-main/apps/shared/OpenClawKit/Sources/OpenClawKit/RemindersCommands.swift`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_command_policy.py`,
+    `tests/test_gateway_node_command_policy.py`
+  - Contract: nodes resolved as iOS by platform or device family include the
+    upstream capability-gated `camera.snap`, `camera.clip`, `watch.status`,
+    `watch.notify`, `contacts.add`, `calendar.add`, and `reminders.add`
+    commands in the default allowlist so declared iOS companion commands
+    survive normalization.
+  - Evidence required: focused iOS capability-command allowlist proof, adjacent
+    command-policy proof, ruff, mypy
+  - Status: superseded by `OZ-COMP-001CF`; not counted
+  - Weight: 0
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_command_policy.py::test_ios_allowlist_includes_openclaw_capability_command_defaults -q`
+    (`1 failed` before implementation because `camera.snap` was absent, then
+    `1 passed`), adjacent policy proof `python -m pytest
+    tests\test_gateway_node_command_policy.py -q` (`6 passed`), ruff, mypy,
+    and focused `git diff --check`.
+
+- [ ] `OZ-COMP-001BZ` iOS companion chat/talk command policy
+  (superseded; app-advertisement probe, not counted as gateway default parity).
+  - Source:
+    `openclaw-main/apps/ios/Sources/Gateway/GatewayConnectionController.swift`,
+    `openclaw-main/apps/shared/OpenClawKit/Sources/OpenClawKit/ChatCommands.swift`,
+    `openclaw-main/apps/shared/OpenClawKit/Sources/OpenClawKit/TalkCommands.swift`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_command_policy.py`,
+    `tests/test_gateway_node_command_policy.py`
+  - Contract: nodes resolved as iOS by platform or device family include the
+    upstream always-advertised `chat.push` and `talk.ptt.start` /
+    `talk.ptt.stop` / `talk.ptt.cancel` / `talk.ptt.once` commands in the
+    default allowlist so declared iOS companion commands survive
+    normalization.
+  - Evidence required: focused iOS chat/talk allowlist proof, adjacent
+    command-policy proof, ruff, mypy
+  - Status: superseded by `OZ-COMP-001CF`; not counted
+  - Weight: 0
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_command_policy.py::test_ios_allowlist_includes_openclaw_chat_and_talk_defaults -q`
+    (`1 failed` before implementation because `chat.push` was absent, then
+    `1 passed`), adjacent policy proof `python -m pytest
+    tests\test_gateway_node_command_policy.py -q` (`5 passed`), ruff, mypy,
+    and focused `git diff --check`.
+
+- [ ] `OZ-COMP-001BY` iOS companion `screen.record` command policy
+  (superseded; `screen.record` is dangerous and explicit-allow only upstream).
+  - Source:
+    `openclaw-main/apps/ios/Sources/Gateway/GatewayConnectionController.swift`,
+    `openclaw-main/apps/shared/OpenClawKit/Sources/OpenClawKit/ScreenCommands.swift`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_command_policy.py`,
+    `tests/test_gateway_node_command_policy.py`
+  - Contract: nodes resolved as iOS by platform or device family include
+    `screen.record` in the default allowlist so upstream-advertised iOS
+    companion commands survive normalization, while macOS/Windows keep the
+    existing default denial unless explicitly configured.
+  - Evidence required: focused iOS allowlist proof, adjacent command-policy
+    proof, ruff, mypy
+  - Status: superseded by `OZ-COMP-001CF`; not counted
+  - Weight: 0
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_command_policy.py::test_ios_allowlist_includes_openclaw_screen_record_default -q`
+    (`1 failed` before implementation because `screen.record` was absent,
+    then `1 passed`), adjacent policy proof `python -m pytest
+    tests\test_gateway_node_command_policy.py -q` (`4 passed`), ruff, mypy,
+    and focused `git diff --check`.
+
+- [x] Plugin SDK `test-helpers/import-side-effects` exact subpath.
+  - Source:
+    `openclaw-main/src/plugin-sdk/test-helpers/import-side-effects.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: scoped and unscoped imports of
+    `openclaw/plugin-sdk/test-helpers/import-side-effects` expose only
+    `assertNoImportTimeSideEffects`, share the same function identity, return
+    silently for an empty `calls` list, and throw OpenClaw-shaped
+    runtime-contract errors with observed-call context when calls are present.
+  - Evidence required: focused plugin runtime import proof, adjacent imported
+    helper proof, ruff, mypy
+  - Status: checkpointed in `6cdf4ea3`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_test_helpers_import_side_effects -q`
+    (`1 failed` before implementation because the subpath exposed the broad
+    generic SDK, then `1 passed`), adjacent imported helper proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "test_helpers
+    and imported_openclaw"` (`8 passed, 1298 deselected`), ruff, mypy, and
+    focused `git diff --check`.
+
+- [x] Browser `browser.act` click `doubleClick` normalization.
+  - Source: `openclaw-main/extensions/browser/src/browser/client-actions.types.ts`,
+    `openclaw-main/extensions/browser/src/browser/routes/agent.act.normalize.ts`,
+    `openclaw-main/extensions/browser/src/browser-tool.schema.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_browser_runtime.py`,
+    `tests/test_gateway_node_methods.py`
+  - Contract: OpenClaw-style click actions accepting `doubleClick=true` must
+    pass gateway validation and dispatch through the native browser runtime as
+    a `dblclick` action while omitted/false values preserve ordinary click
+    behavior.
+  - Evidence required: focused browser gateway/runtime tests, adjacent browser
+    gateway proof, ruff, mypy
+  - Status: checkpointed in `81f8ba7a`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_browser_act_accepts_openclaw_click_double_click_request tests\test_gateway_node_methods.py::test_browser_act_args_maps_bounded_action_subset -q`
+    (`2 passed` after implementation; failed before implementation with the
+    gateway rejecting `doubleClick` and the runtime keeping the action as
+    `click`), adjacent browser proof `python -m pytest
+    tests\test_gateway_node_methods.py -q -k "browser_act or browser_runtime
+    or browser_clipboard or browser_focus"` (`7 passed, 1298 deselected`),
+    ruff, and mypy.
 
 - [x] ACP `resumeSessionId` ownership enforcement for `sessions.spawn`.
   - Source: `openclaw-main/src/agents/acp-spawn.ts`
@@ -8143,6 +8611,23 @@ repo-wide OpenClaw parity remains estimated at ~99.9%.
     remained visible, then `1 passed`), simple markdown-image proof, media
     directive guard proofs, adjacent provider/native proof (`19 passed, 504
     deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-PROV-001HK` Telegram markdown-image title/multiple/invalid edges.
+  - Source: `openclaw-main/src/media/parse.ts`,
+    `openclaw-main/src/media/parse.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Telegram markdown-image extraction strips title suffixes, lifts
+    multiple safe HTTPS images in order, and keeps invalid local/HTTP/blocked
+    targets as visible text without media delivery.
+  - Evidence required: focused title/multiple/invalid markdown-image proof,
+    adjacent provider/native send proof, ruff, mypy
+  - Status: checkpointed in `8d137825`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused proof
+    `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_telegram_markdown_image_title_and_multiple tests\test_ops_mesh.py::test_ops_mesh_service_send_keeps_invalid_telegram_markdown_images_as_text -q`
+    (`4 passed`), adjacent provider/native proof (`23 passed, 504 deselected`),
+    ruff, mypy, and focused `git diff --check`.
 
 - [x] Zalo user `channels.logout` runtime profile cleanup.
   - Source: `openclaw-main/src/gateway/server-methods/channels.ts`,

@@ -4,6 +4,7 @@ import asyncio
 import base64
 import codecs
 import copy
+import errno
 import importlib
 import inspect
 import ipaddress
@@ -19,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -1667,6 +1669,30 @@ def _format_log_tail_line(raw: str, *, local_time: bool) -> str:
     return " ".join(parts)
 
 
+def _logs_broken_pipe_code(exc: OSError) -> str | None:
+    if exc.errno == errno.EPIPE:
+        return "EPIPE"
+    if exc.errno == errno.EIO:
+        return "EIO"
+    return None
+
+
+def _logs_safe_echo(message: object = "", *, err: bool = False) -> bool:
+    try:
+        typer.echo(message, err=err)
+    except OSError as exc:
+        code = _logs_broken_pipe_code(exc)
+        if code is None:
+            raise
+        stream_name = "stderr" if err else "stdout"
+        try:
+            typer.echo(f"output {stream_name} closed ({code}). Stopping tail.", err=True)
+        except OSError:
+            pass
+        return False
+    return True
+
+
 def _emit_logs_tail(
     payload: dict[str, object],
     *,
@@ -1679,18 +1705,22 @@ def _emit_logs_tail(
         _emit_payload(payload, json_output=True)
         return
     if show_header:
-        typer.echo(f"Log file: {payload.get('file') or ''}")
+        if not _logs_safe_echo(f"Log file: {payload.get('file') or ''}"):
+            return
     if payload.get("truncated"):
-        typer.echo("Log tail truncated (increase --max-bytes).", err=True)
+        if not _logs_safe_echo("Log tail truncated (increase --max-bytes).", err=True):
+            return
     if payload.get("reset"):
-        typer.echo("Log cursor reset (file rotated).", err=True)
+        if not _logs_safe_echo("Log cursor reset (file rotated).", err=True):
+            return
     lines = payload.get("lines")
     if not isinstance(lines, list) or not lines:
         if empty_notice:
-            typer.echo("No log lines.")
+            _logs_safe_echo("No log lines.")
         return
     for line in lines:
-        typer.echo(_format_log_tail_line(str(line), local_time=local_time))
+        if not _logs_safe_echo(_format_log_tail_line(str(line), local_time=local_time)):
+            return
 
 
 def _msteams_delegated_auth_config_patch(account_id: str | None) -> dict[str, object]:
@@ -11165,6 +11195,9 @@ def _openclaw_update_available_hint(payload: Mapping[str, object]) -> str | None
 _OPENCLAW_UPDATE_CHANNELS = {"stable", "beta", "dev"}
 _OPENCLAW_UPDATE_PACKAGE_MANAGERS = {"pnpm", "bun", "npm"}
 _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME = "openzues"
+_OPENZUES_UPDATE_CORE_PACKAGE_NAMES = frozenset(
+    {_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME, "@openzues/openzues"}
+)
 _OPENCLAW_UPDATE_GLOBAL_ROOT_DETECTION_TIMEOUT_SECONDS = 2.0
 _OPENZUES_MAIN_PACKAGE_SPEC = "github:openzues/openzues#main"
 _OPENCLAW_GATEWAY_SERVICE_MARKER = "openclaw"
@@ -11212,8 +11245,47 @@ def _openclaw_update_running_inside_gateway_service(
     return not service_kind or service_kind == _OPENCLAW_GATEWAY_SERVICE_KIND
 
 
+def _openclaw_update_read_package_json_name(root: Path) -> str | None:
+    package_json = root / "package.json"
+    if not _doctor_path_exists(package_json):
+        return None
+    try:
+        parsed = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed, Mapping):
+        return None
+    return _optional_cli_string(parsed.get("name"))
+
+
+def _openclaw_update_read_pyproject_name(root: Path) -> str | None:
+    pyproject = root / "pyproject.toml"
+    if not _doctor_path_exists(pyproject):
+        return None
+    try:
+        parsed = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    project = parsed.get("project") if isinstance(parsed, Mapping) else None
+    if not isinstance(project, Mapping):
+        return None
+    return _optional_cli_string(project.get("name"))
+
+
+def _openclaw_update_is_openzues_git_root(root: Path) -> bool:
+    package_name = _openclaw_update_read_package_json_name(root)
+    if package_name is not None:
+        return package_name in _OPENZUES_UPDATE_CORE_PACKAGE_NAMES
+    project_name = _openclaw_update_read_pyproject_name(root)
+    if project_name is not None:
+        return project_name in _OPENZUES_UPDATE_CORE_PACKAGE_NAMES
+    return root.name.lower() == _OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME
+
+
 def _openclaw_update_install_kind(root: Path) -> str:
     if _doctor_path_exists(root / ".git"):
+        if not _openclaw_update_is_openzues_git_root(root):
+            return "not-openclaw-root"
         return "git"
     if _doctor_path_exists(root):
         return "package"
@@ -11234,7 +11306,20 @@ def _openclaw_update_read_package_version(root: Path) -> str | None:
 
 
 def _openclaw_update_normalize_package_target(value: object) -> str:
-    return value.strip() if isinstance(value, str) else ""
+    target = value.strip() if isinstance(value, str) else ""
+    if not target:
+        return ""
+    for package_name in (_OPENZUES_UPDATE_DEFAULT_PACKAGE_NAME,):
+        normalized_package_name = package_name.strip()
+        if not normalized_package_name:
+            continue
+        if target == normalized_package_name:
+            return ""
+        prefix = f"{normalized_package_name}@"
+        if target.startswith(prefix):
+            tag = target[len(prefix) :].strip()
+            return tag
+    return target
 
 
 def _openclaw_update_is_main_package_target(value: object) -> bool:
@@ -20116,7 +20201,10 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
         "plugins": [dict(plugin) for plugin in plugin_rows],
         "rawConfig": dict(config_snapshot),
         "config": resolved_config,
-        "activationSourceConfig": dict(config_snapshot),
+        "activationSourceConfig": _plugin_runtime_activation_source_config_from_rows(
+            config_snapshot,
+            plugin_rows,
+        ),
         "autoEnabledReasons": auto_enabled_reasons,
         "env": dict(os.environ),
         "onlyPluginIds": only_plugin_ids,
@@ -20203,21 +20291,40 @@ def _plugin_runtime_resolved_config_from_rows(
     plugins_value = resolved.get("plugins")
     plugins = dict(plugins_value) if isinstance(plugins_value, Mapping) else {}
     allow_value = plugins.get("allow")
-    if isinstance(allow_value, list):
-        allow = list(allow_value)
-        for plugin_id in auto_enabled_plugin_ids:
-            if plugin_id not in allow:
-                allow.append(plugin_id)
-        plugins["allow"] = allow
-        resolved["plugins"] = plugins
+    allow = list(allow_value) if isinstance(allow_value, list) else []
+    for plugin_id in auto_enabled_plugin_ids:
+        if plugin_id not in allow:
+            allow.append(plugin_id)
+    plugins["allow"] = allow
 
     for plugin_id in auto_enabled_plugin_ids:
+        _plugin_runtime_enable_plugin_entry(plugins, plugin_id)
         channel_id = _normalize_openclaw_channel_plugin_id(plugin_id)
         if channel_id is not None:
             _plugin_runtime_enable_channel_config(resolved, channel_id)
-        else:
-            _plugin_runtime_enable_plugin_entry(plugins, plugin_id)
-            resolved["plugins"] = plugins
+    resolved["plugins"] = plugins
+    return resolved
+
+
+def _plugin_runtime_activation_source_config_from_rows(
+    config_snapshot: Mapping[str, object],
+    plugin_rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    resolved = copy.deepcopy(dict(config_snapshot))
+    auto_enabled_plugin_ids = _plugin_auto_enabled_plugin_ids_from_rows(plugin_rows)
+    if not auto_enabled_plugin_ids:
+        return resolved
+
+    plugins_value = resolved.get("plugins")
+    plugins = dict(plugins_value) if isinstance(plugins_value, Mapping) else {}
+    allow_value = plugins.get("allow")
+    allow = list(allow_value) if isinstance(allow_value, list) else []
+    for plugin_id in auto_enabled_plugin_ids:
+        if plugin_id not in allow:
+            allow.append(plugin_id)
+        _plugin_runtime_enable_plugin_entry(plugins, plugin_id)
+    plugins["allow"] = allow
+    resolved["plugins"] = plugins
     return resolved
 
 
@@ -64513,6 +64620,10 @@ function assertNoImportTimeSideEffects(params = {}) {
   );
 }
 
+const testHelpersImportSideEffectsRuntime = {
+  assertNoImportTimeSideEffects,
+};
+
 function createPluginRecord(overrides = {}) {
   const id = String(overrides.id || "test-plugin");
   return {
@@ -93811,6 +93922,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return testHelpersPairingReplyRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/test-helpers/import-side-effects" ||
+    request === "@openclaw/plugin-sdk/test-helpers/import-side-effects"
+  ) {
+    return testHelpersImportSideEffectsRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/plugin-test-api" ||
     request === "@openclaw/plugin-sdk/plugin-test-api"
   ) {
@@ -95959,6 +96076,22 @@ def _plugin_package_channel_catalog_meta(value: object) -> dict[str, object]:
     prefer_over = _plugin_manifest_string_list(value.get("preferOver"))
     if prefer_over:
         metadata["preferOver"] = prefer_over
+    commands = _plugin_package_channel_command_defaults(value.get("commands"))
+    if commands:
+        metadata["commands"] = commands
+    return metadata
+
+
+def _plugin_package_channel_command_defaults(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    metadata: dict[str, object] = {}
+    native_commands_auto_enabled = value.get("nativeCommandsAutoEnabled")
+    if isinstance(native_commands_auto_enabled, bool):
+        metadata["nativeCommandsAutoEnabled"] = native_commands_auto_enabled
+    native_skills_auto_enabled = value.get("nativeSkillsAutoEnabled")
+    if isinstance(native_skills_auto_enabled, bool):
+        metadata["nativeSkillsAutoEnabled"] = native_skills_auto_enabled
     return metadata
 
 
@@ -96303,6 +96436,10 @@ def _merge_package_channel_meta(
         prefer_over = _plugin_manifest_string_list(channel.get("preferOver"))
         if prefer_over:
             config["preferOver"] = prefer_over
+    if not _plugin_package_channel_command_defaults(config.get("commands")):
+        commands = _plugin_package_channel_command_defaults(channel.get("commands"))
+        if commands:
+            config["commands"] = commands
     merged_configs[channel_id] = config
     return merged_configs
 
@@ -108891,6 +109028,17 @@ def update_root(
         return
     root = _openzues_package_root()
     install_kind = _openclaw_update_install_kind(root)
+    if install_kind == "not-openclaw-root":
+        payload = {
+            "status": "error",
+            "mode": "unknown",
+            "root": str(root),
+            "reason": "not-openclaw-root",
+            "steps": [],
+            "durationMs": 0,
+        }
+        _emit_update_run_result(payload, json_output=json_output)
+        raise typer.Exit(code=1)
     if install_kind == "package":
         if _openclaw_update_running_inside_gateway_service():
             typer.echo(

@@ -4,9 +4,9 @@
 
 - Updated: 2026-05-14.
 - Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- Estimated active gateway/session/tool-contract family parity: ~99.969% for the bounded local OpenZues path.
+- Estimated active gateway/session/tool-contract family parity: ~99.970% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~99.987% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `artifacts.list` / `artifacts.get` / `artifacts.download`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
-- Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.995%;
+- Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.997%;
   it is no longer the active queue head.
 - Estimated packaging/companion app breadth: ~11.4% after QR setup-code
   safety/SecretRef slices, local QR token/password SecretRef resolution,
@@ -25,8 +25,8 @@
   warnings, Windows companion-node default command parity, and device-token
   scope/caller/visibility/disconnect guards; companion apps remain broadly
   open.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.99999997% after the runtime bridge doctor posture, native ACP client interactive replay, ACP persisted task-record child-cap counting, ACP `streamTo="parent"` requester-context preflight, ACP `resumeSessionId` requester-context preflight, ACP `resumeSessionId` ownership enforcement, ACP model/thinking override propagation, ACP configured runtime agent alias mapping, ACP runtime-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP thread-binding dispatch-failure cleanup, ACP accepted-spawn registration-failure cleanup, Docker runtime home bootstrap, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice, native Zalo pairing list/approve/notify CLI, command-owner bootstrap, list default, bootstrap explanation, not-found error text, and disabled-account capability action gating, package-update downgrade confirmation, stored-channel package update dispatch, package-update post-core resume mode, package-update post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback, startup-optimization doctor notes, installed runtime session/control-UI contribution capture, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch/unhealthy-snapshot restart-health failure with restart-log/status follow-up diagnostics, gateway health `serverVersion` projection, `gateway status --deep` CLI alias coverage, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect human typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, deeper ACP bridge lifecycle edge cases, deeper installed plugin module import/activation, and broader runtime command ergonomics.
-- Estimated provider-native inbound/outbound breadth: ~99.99999976% after Slack
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.999999991% after the runtime bridge doctor posture, native ACP client interactive replay, ACP persisted task-record child-cap counting, ACP `streamTo="parent"` requester-context preflight, ACP `resumeSessionId` requester-context preflight, ACP `resumeSessionId` ownership enforcement, ACP model/thinking override propagation, ACP configured runtime agent alias mapping, ACP runtime-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP thread-binding dispatch-failure cleanup, ACP accepted-spawn registration-failure cleanup, Docker runtime home bootstrap, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice, native Zalo pairing list/approve/notify CLI, command-owner bootstrap, list default, bootstrap explanation, not-found error text, and disabled-account capability action gating, package-update downgrade confirmation, stored-channel package update dispatch, package-update post-core resume mode, package-update post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback, startup-optimization doctor notes, installed runtime session/control-UI contribution capture, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch/unhealthy-snapshot restart-health failure with restart-log/status follow-up diagnostics, gateway health `serverVersion` projection, `gateway status --deep` CLI alias coverage, owning npm/pnpm/bun global-root package update detection, package-prefixed update tag normalization, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect human typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, plugin helper slices through the runtime/helper facade queue including `test-helpers/import-side-effects`, and package-channel command metadata projection; remaining gaps are packaging/distribution breadth, deeper ACP bridge lifecycle edge cases, deeper installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated provider-native inbound/outbound breadth: ~99.99999979% after Slack
   event/interactions/slash/signing coverage, command aliases/plugin command
   injection, WhatsApp reply fanout, Telegram media reply fanout/caption
   passthrough, Feishu media implicit reply fanout, Matrix implicit reply
@@ -55,8 +55,9 @@
   text follow-up delivery plus QQBot inline media text ordering/result
   metadata, direct outbound `MEDIA:` / `[[audio_as_voice]]` /
   `[[reply_to:...]]` / `[[reply_to_current]]` directive lifting,
-  Matrix media/text implicit reply fanout, IRC media attachment formatting, and
-  Discord multi-media implicit reply fanout.
+  Matrix media/text implicit reply fanout, IRC media attachment formatting,
+  Discord multi-media implicit reply fanout, Google Chat add-on
+  body-token webhook ingress, and Mattermost native reaction actions.
 - Runtime helper addendum: imported `agent-runtime` core helper coverage is
   now verified in `a8e871a3` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `agent-runtime` model-selection helper
@@ -25849,6 +25850,409 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
   src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Source/test checkpointed in `75bf8a39`.
+
+- Direct provider-native outbound Telegram markdown-image extraction is now
+  regression-locked for the remaining OpenClaw parser edge cases: title suffix
+  stripping, multiple image extraction in order, and invalid local/HTTP/blocked
+  targets staying as visible text without media delivery. This closes
+  `OZ-PROV-001HK`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.99999977%.
+- Verified the remaining Telegram markdown-image edge cases with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_lifts_telegram_markdown_image_title_and_multiple tests\test_ops_mesh.py::test_ops_mesh_service_send_keeps_invalid_telegram_markdown_images_as_text -q`
+  (`4 passed`), adjacent provider/native proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "markdown_image or traversal_media or
+  bare_filename_media or localhost_media or http_media or media_directive or
+  reply_to_current or reply_directive or audio_as_voice or native_adapter or
+  provider_result_persistence"` (`23 passed, 504 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Test checkpointed in `8d137825`; implementation was covered by the
+  markdown-image scanner landed in `75bf8a39`.
+
+- Google Chat inbound webhooks now accept Google Workspace add-on payloads
+  carrying `authorizationEventObject.systemIdToken` in the JSON body, normalize
+  `chat.messagePayload` into a standard `MESSAGE` event, route it into the
+  native session-backed delivery path, and expose the default `/googlechat`
+  FastAPI endpoint with config-backed token preflight. This closes
+  `OZ-PROV-001HL`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.99999978%.
+- Verified Google Chat add-on webhook ingress with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_googlechat_webhook_delivers_addon_message tests\test_googlechat_webhook.py::test_googlechat_webhook_accepts_addon_body_system_id_token -q`
+  (`2 passed` after implementation; the service proof failed first with a
+  missing `handle_googlechat_webhook`, and the app proof failed first with a
+  `404` for `/googlechat`), adjacent provider proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "googlechat and (webhook or native_route or
+  direct_channel_message or upload_file or react_remove)"` (`7 passed, 521
+  deselected`), adjacent app proof `python -m pytest
+  tests\test_googlechat_webhook.py tests\test_app.py -q -k
+  "googlechat_webhook or msteams_messages_endpoint_rejects_failed_jwt_before_json_body
+  or gateway_channels_endpoint_classifies_googlechat_native_route"` (`3
+  passed, 216 deselected`), `ruff check src\openzues\services\ops_mesh.py
+  src\openzues\app.py tests\test_ops_mesh.py tests\test_googlechat_webhook.py`,
+  and `mypy src\openzues\services\ops_mesh.py src\openzues\app.py`.
+  Source/test checkpointed in `1f24c150`.
+
+- `browser.act` now accepts OpenClaw-style click requests with
+  `doubleClick=true`, and the native browser runtime maps them to the existing
+  `dblclick` action while preserving ordinary click behavior. This closes
+  `OZ-CANVAS-001W`; repo-wide parity remains estimated at ~99.9%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.996%.
+- Verified browser click `doubleClick` parity with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_browser_act_accepts_openclaw_click_double_click_request tests\test_gateway_node_methods.py::test_browser_act_args_maps_bounded_action_subset -q`
+  (`2 passed` after implementation; the gateway proof failed first because
+  `doubleClick` was rejected, and the runtime mapping proof failed first
+  because the action stayed `click`), adjacent browser proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "browser_act or browser_runtime or
+  browser_clipboard or browser_focus"` (`7 passed, 1298 deselected`),
+  `ruff check src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_browser_runtime.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_browser_runtime.py`. Source/test checkpointed
+  in `81f8ba7a`.
+
+- Native OpenClaw plugin SDK imports now resolve the exact scoped and unscoped
+  `test-helpers/import-side-effects` subpath to the narrow
+  `assertNoImportTimeSideEffects` helper instead of the broad generic SDK
+  fallback. This closes `OZ-PLUGIN-00383`; repo-wide parity remains estimated
+  at ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.99999998%.
+- Verified plugin SDK import-side-effects helper parity with focused red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_test_helpers_import_side_effects -q`
+  (`1 failed` before implementation because the subpath exposed 1,500+ generic
+  SDK keys, then `1 passed`), adjacent helper proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "test_helpers and imported_openclaw"`
+  (`8 passed, 1298 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `6cdf4ea3`.
+
+- iOS companion node command policy now includes OpenClaw's default
+  `screen.record` command for nodes resolved as iOS by platform or device
+  family, while preserving the existing macOS/Windows default exclusion. This
+  closes `OZ-COMP-001BY`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~11.5%.
+- Verified iOS companion `screen.record` allowlist parity with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_command_policy.py::test_ios_allowlist_includes_openclaw_screen_record_default -q`
+  (`1 failed` before implementation because `screen.record` was absent, then
+  `1 passed`), adjacent policy proof `python -m pytest
+  tests\test_gateway_node_command_policy.py -q` (`4 passed`), `ruff check
+  src\openzues\services\gateway_node_command_policy.py
+  tests\test_gateway_node_command_policy.py`, `mypy
+  src\openzues\services\gateway_node_command_policy.py`, and focused
+  `git diff --check`. Source/test checkpointed in `deeb546d`.
+
+- iOS companion node command policy now also includes OpenClaw's always
+  advertised `chat.push` and `talk.ptt.start` / `talk.ptt.stop` /
+  `talk.ptt.cancel` / `talk.ptt.once` commands for iPhone/iPad/iOS metadata.
+  This closes `OZ-COMP-001BZ`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~11.6%.
+- Verified iOS companion chat/talk command allowlist parity with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_command_policy.py::test_ios_allowlist_includes_openclaw_chat_and_talk_defaults -q`
+  (`1 failed` before implementation because `chat.push` was absent, then `1
+  passed`), adjacent policy proof `python -m pytest
+  tests\test_gateway_node_command_policy.py -q` (`5 passed`), `ruff check
+  src\openzues\services\gateway_node_command_policy.py
+  tests\test_gateway_node_command_policy.py`, `mypy
+  src\openzues\services\gateway_node_command_policy.py`, and focused
+  `git diff --check`. Source/test checkpointed in `ddd70a86`.
+
+- iOS companion node command policy now includes OpenClaw's capability-gated
+  `camera.snap`, `camera.clip`, `watch.status`, `watch.notify`,
+  `contacts.add`, `calendar.add`, and `reminders.add` commands for
+  iPhone/iPad/iOS metadata. This closes `OZ-COMP-001CA`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~11.7%.
+- Verified iOS companion capability-command allowlist parity with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_command_policy.py::test_ios_allowlist_includes_openclaw_capability_command_defaults -q`
+  (`1 failed` before implementation because `camera.snap` was absent, then `1
+  passed`), adjacent policy proof `python -m pytest
+  tests\test_gateway_node_command_policy.py -q` (`6 passed`), `ruff check
+  src\openzues\services\gateway_node_command_policy.py
+  tests\test_gateway_node_command_policy.py`, `mypy
+  src\openzues\services\gateway_node_command_policy.py`, and focused
+  `git diff --check`. Source/test checkpointed in `dc72a787`.
+
+- Android companion node command policy now includes OpenClaw's action command
+  defaults for `camera.snap`, `camera.clip`, `contacts.add`, `calendar.add`,
+  `sms.send`, and `sms.search`, matching the Android protocol constants and
+  invoke registry. This closes `OZ-COMP-001CB`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~11.8%.
+- Verified Android companion action-command allowlist parity with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_command_policy.py::test_android_allowlist_includes_openclaw_action_command_defaults -q`
+  (`1 failed` before implementation because `camera.snap` was absent, then `1
+  passed`), adjacent policy proof `python -m pytest
+  tests\test_gateway_node_command_policy.py -q` (`7 passed`), `ruff check
+  src\openzues\services\gateway_node_command_policy.py
+  tests\test_gateway_node_command_policy.py`, `mypy
+  src\openzues\services\gateway_node_command_policy.py`, and focused
+  `git diff --check`. Source/test checkpointed in `669c3dc0`.
+
+- macOS companion node command policy now includes OpenClaw's
+  `system.execApprovals.get` and `system.execApprovals.set` defaults from
+  `MacNodeModeCoordinator`, without widening Windows/Linux command defaults.
+  This closes `OZ-COMP-001CC`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~11.9%.
+- Verified macOS exec-approval command allowlist parity with focused red/green
+  `python -m pytest tests\test_gateway_node_command_policy.py::test_macos_allowlist_includes_openclaw_exec_approval_commands -q`
+  (`1 failed` before implementation because `system.execApprovals.get` was
+  absent, then `1 passed`), adjacent policy proof `python -m pytest
+  tests\test_gateway_node_command_policy.py -q` (`8 passed`), `ruff check
+  src\openzues\services\gateway_node_command_policy.py
+  tests\test_gateway_node_command_policy.py`, `mypy
+  src\openzues\services\gateway_node_command_policy.py`, and focused
+  `git diff --check`. Source/test checkpointed in `5b9f287b`.
+
+- macOS companion node command policy now includes OpenClaw's camera capability
+  action commands `camera.snap` and `camera.clip` from
+  `MacNodeModeCoordinator`, matching the existing Android/iOS camera action
+  allowlist. This closes `OZ-COMP-001CD`; repo-wide parity remains estimated
+  at ~99.9%, and packaging/companion breadth moves to ~12.0%.
+- Verified macOS camera action command allowlist parity with focused red/green
+  `python -m pytest tests\test_gateway_node_command_policy.py::test_macos_allowlist_includes_openclaw_camera_action_commands -q`
+  (`1 failed` before implementation because `camera.snap` was absent, then `1
+  passed`), adjacent policy proof `python -m pytest
+  tests\test_gateway_node_command_policy.py -q` (`9 passed`), `ruff check
+  src\openzues\services\gateway_node_command_policy.py
+  tests\test_gateway_node_command_policy.py`, `mypy
+  src\openzues\services\gateway_node_command_policy.py`, and focused
+  `git diff --check`. Source/test checkpointed in `dae05faa`.
+
+- macOS companion node command policy now includes OpenClaw's
+  `screen.record` default from `MacNodeModeCoordinator` while preserving the
+  existing Windows/Linux default denial. This closes `OZ-COMP-001CE`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~12.1%.
+- Verified macOS screen recording command allowlist parity with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_command_policy.py::test_macos_allowlist_includes_openclaw_screen_commands -q`
+  (`1 failed` before implementation because `screen.record` was absent, then
+  `1 passed`), adjacent policy proof `python -m pytest
+  tests\test_gateway_node_command_policy.py -q` (`9 passed`), `ruff check
+  src\openzues\services\gateway_node_command_policy.py
+  tests\test_gateway_node_command_policy.py`, `mypy
+  src\openzues\services\gateway_node_command_policy.py`, and focused
+  `git diff --check`. Source/test checkpointed in `29368f38`.
+
+- Correction: OpenZues gateway node command policy is realigned with
+  OpenClaw's authoritative `src/gateway/node-command-policy.ts` and
+  `gateway-misc.test.ts` defaults. App-advertised but dangerous companion
+  actions (`screen.record`, `camera.snap`, `camera.clip`, contacts/calendar/
+  reminders add, SMS send/search, and `system.execApprovals.*`) are not
+  default `node.invoke` allowlist entries; they require explicit allowlist or
+  dedicated gateway methods such as `exec.approvals.node.*`. This supersedes
+  the app-advertisement-only `OZ-COMP-001BY` through `OZ-COMP-001CE` tracker
+  claims, restores packaging/companion breadth to ~11.4%, and preserves the
+  source/test correction in `e8417d65`.
+- Verified the correction with a focused red proof
+  `python -m pytest tests\test_gateway_node_command_policy.py -q` (`4
+  failed` before implementation because dangerous defaults were allowed, then
+  `7 passed`), `ruff check
+  src\openzues\services\gateway_node_command_policy.py
+  tests\test_gateway_node_command_policy.py`, `mypy
+  src\openzues\services\gateway_node_command_policy.py`, and focused
+  `git diff --check`.
+
+- Gateway node command policy now accepts a fakeable dangerous plugin command
+  inventory and removes those commands from platform defaults until they are
+  explicitly re-added through `allow_commands`, matching OpenClaw's
+  `listDangerousPluginNodeCommands()` behavior for plugin node-host commands
+  and node-invoke policies. `GatewayNodeMethodService` carries the inventory
+  through node list/describe, pairing-scope upgrade checks, browser proxy, and
+  `node.invoke`. This closes `OZ-CANVAS-001X`; repo-wide parity remains
+  estimated at ~99.9%, active gateway/session/tool-contract parity moves to
+  ~99.970%, and browser/canvas/nodes/voice bounded-command parity moves to
+  ~99.997%.
+- Verified plugin-dangerous node command filtering with focused red/green
+  `python -m pytest tests\test_gateway_node_command_policy.py::test_plugin_dangerous_node_commands_filter_defaults_until_explicitly_allowed -q`
+  (`TypeError` before implementation, then `1 passed`) and
+  `python -m pytest tests\test_gateway_node_methods.py::test_node_invoke_filters_dangerous_plugin_node_command_defaults -q`
+  (`TypeError` before implementation, then `1 passed`), adjacent policy proof
+  `python -m pytest tests\test_gateway_node_command_policy.py -q` (`8
+  passed`), adjacent node-method proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "dangerous_plugin_node_command or
+  plugin_node_host_commands or
+  node_invoke_rejects_system_exec_approvals_namespace_before_wake_attempt"`
+  (`3 passed, 1304 deselected`), ruff, mypy, and focused `git diff --check`.
+  Source/test checkpointed in `6a6c12c6`.
+
+- Mattermost provider-native `message.action react` now mirrors OpenClaw's
+  Mattermost extension behavior by accepting `messageId` or `postId`, trimming
+  colon-wrapped emoji names, resolving the bot user through `/api/v4/users/me`,
+  and dispatching add/remove reactions through `/api/v4/reactions` and
+  `/api/v4/users/:userId/posts/:postId/reactions/:emoji`. This closes
+  `OZ-PROV-001HM`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.99999979%.
+- Verified Mattermost native reaction action parity with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_mattermost_react_route -q`
+  (`None` before implementation, then `1 passed`), adjacent provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "mattermost and (native_route or react)"`
+  (`3 passed, 526 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `1f2783fa`.
+
+- Installed/plugin package manifest channel metadata now preserves
+  `openclaw.channel.commands.nativeCommandsAutoEnabled` and
+  `nativeSkillsAutoEnabled`, matching OpenClaw's installed manifest registry
+  reconstruction and channel-config merge behavior. Package channel command
+  defaults are projected into both `channelCatalogMeta.commands` and the
+  matching `channelConfigs[channelId].commands` when the manifest did not
+  already define command defaults. This closes `OZ-PLUGIN-00384`; repo-wide
+  parity remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge
+  parity moves to ~99.99999999%.
+- Verified package channel command metadata parity with focused red/green
+  `python -m pytest tests\test_cli.py::test_plugins_list_json_preserves_package_manifest_runtime_metadata -q`
+  (`commands` absent before implementation, then `1 passed`), adjacent plugin
+  manifest proof `python -m pytest tests\test_cli.py -q -k
+  "preserves_manifest_channel_configs or package_manifest_runtime_metadata or
+  package_manifest_min_host_version"` (`3 passed, 653 deselected`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`,
+  and focused `git diff --check`. Source/test checkpointed in `ce9eeaf8`.
+
+- Package update `--tag` handling now normalizes package-name-prefixed tag
+  input such as `openzues@beta` before registry lookup and global install-spec
+  construction, matching OpenClaw's `normalizePackageTagInput` behavior for
+  `openclaw@beta`. This closes `OZ-PKG-001DK`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.999999991%.
+- Verified package-prefixed update tag normalization with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_dry_run_json_normalizes_package_name_prefixed_tag -q`
+  (`openzues@openzues@beta` before implementation, then `1 passed`),
+  adjacent update proof `python -m pytest tests\test_cli.py -q -k
+  "update_dry_run_json_normalizes_package_name_prefixed_tag or
+  update_dry_run_json_uses_stored_update_channel or
+  update_dry_run_json_falls_back_beta_channel_to_latest or
+  update_resolve_npm_channel_tag_falls_back_beta_prerelease_to_latest or
+  update_dry_run_json_preserves_explicit_package_install_spec"` (`5 passed,
+  652 deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`,
+  `mypy src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `c2211ffb`.
+
+- Tlon native route registration is now exposed in the operator notification
+  route form and participates in native route default gateway send/poll
+  events, matching the upstream `@openclaw/tlon` channel manifest selection
+  label. This closes `OZ-PROV-001HN`; repo-wide parity remains estimated at
+  ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.99999980%.
+- Verified Tlon native route operator UI parity with focused red/green
+  `python -m pytest tests\test_app.py::test_notification_route_operator_form_offers_tlon_native_routes -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent operator
+  route proof `python -m pytest tests\test_app.py -q -k
+  "notification_route_operator_form_offers or
+  gateway_channels_endpoint_classifies_tlon_native_route"` (`12 passed, 207
+  deselected`), `node --check src\openzues\web\static\app.js`, `ruff check
+  src\openzues\web tests\test_app.py`, and focused `git diff --check`. Mypy
+  was not applicable because the touched web owner directory contains no
+  Python source modules. Source/test checkpointed in `5d035d5a`.
+
+- Git checkout updates now reject roots that identify as a different
+  `package.json` package before dispatching the runtime update service,
+  matching OpenClaw's `not-openclaw-root` guard. Native OpenZues source
+  checkouts remain accepted through the `pyproject.toml` project identity or
+  the repository folder name fallback. This closes `OZ-PKG-001DL`; repo-wide
+  parity remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge
+  parity moves to ~99.999999992%.
+- Verified non-OpenZues git root update rejection with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_json_rejects_non_openzues_git_root_before_runtime -q`
+  (`run_update` was called before implementation, then `1 passed`), adjacent
+  update proof `python -m pytest tests\test_cli.py -q -k
+  "update_json_rejects_non_openzues_git_root_before_runtime or
+  update_json_dispatches_runtime_update_service or
+  update_json_passes_dev_target_ref_env_to_git_runtime or
+  update_dry_run_json_normalizes_package_name_prefixed_tag or
+  update_dry_run_json_uses_stored_update_channel"` (`5 passed, 653
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `7e60f84a`.
+
+- Installed plugin runtime activation now mirrors OpenClaw's configured-channel
+  activation shape by adding auto-enabled channel owner plugin IDs to both
+  `plugins.allow` and `plugins.entries[id].enabled` before the activation
+  adapter runs. This closes `OZ-PLUGIN-00385`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.999999993%.
+- Verified channel plugin runtime activation entries with focused red/green
+  `python -m pytest tests\test_cli.py -q -k "plugins_doctor_json_activation_adapter_receives_resolved_auto_enabled_config"`
+  (`entries` absent before implementation, then `1 passed, 657 deselected`),
+  adjacent plugin runtime proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_doctor_json_activation_adapter_receives or
+  plugins_doctor_json_projects_runtime_text_transform_plugins or
+  package_manifest_runtime_metadata"` (`5 passed, 653 deselected`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`,
+  and focused `git diff --check`. Source/test checkpointed in `30870984`.
+
+- Installed plugin runtime activation source config now receives the same
+  OpenClaw configured-channel activation metadata, adding auto-enabled channel
+  owner plugin IDs to `activationSourceConfig.plugins.allow` and
+  `activationSourceConfig.plugins.entries[id].enabled` while preserving the raw
+  channel config. This closes `OZ-PLUGIN-00386`; repo-wide parity remains
+  estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.999999994%.
+- Verified channel plugin activation source config parity with focused
+  red/green `python -m pytest tests\test_cli.py -q -k
+  "plugins_doctor_json_activation_adapter_receives_resolved_auto_enabled_config"`
+  (`activationSourceConfig.plugins.allow` stayed empty before implementation,
+  then `1 passed, 657 deselected`), adjacent plugin runtime proof `python -m
+  pytest tests\test_cli.py -q -k "plugins_doctor_json_activation_adapter_receives
+  or plugins_doctor_json_projects_runtime_text_transform_plugins or
+  package_manifest_runtime_metadata"` (`5 passed, 653 deselected`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`,
+  and focused `git diff --check`. Source/test checkpointed in `2e8f212c`.
+
+- The logs CLI now handles closed stdout pipes like OpenClaw's safe stream
+  writer: a broken stdout pipe stops tail emission and prints
+  `output stdout closed (EPIPE). Stopping tail.` to stderr instead of failing
+  the command. This closes `OZ-PKG-001DM`; repo-wide parity remains estimated
+  at ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.999999995%.
+- Verified logs broken-pipe handling with focused red/green
+  `python -m pytest tests\test_cli.py::test_logs_plain_warns_when_stdout_pipe_closes -q`
+  (`SystemExit(1)` before implementation, then `1 passed`), adjacent logs
+  proof `python -m pytest tests\test_cli.py -q -k
+  "logs_plain_warns_when_stdout_pipe_closes or
+  logs_plain_local_time_formats_structured_log_lines or
+  logs_plain_truncation_notice_includes_max_bytes_hint or
+  logs_follow_reuses_cursor_and_prints_file_header_once or
+  logs_plain_reset_notice_mentions_file_rotation"` (`5 passed, 654
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `a4b1114c`.
+
+- Feishu/Lark native route registration is now exposed in the operator
+  notification route form and receives native gateway send/poll default events,
+  matching the upstream `@openclaw/feishu` channel surface and local
+  Feishu/Lark channel catalog. This closes `OZ-PROV-001HO`; repo-wide parity
+  remains estimated at ~99.9%, and provider-native inbound/outbound breadth
+  moves to ~99.99999981%.
+- Verified Feishu/Lark native route operator UI parity with focused red/green
+  `python -m pytest tests\test_app.py::test_notification_route_operator_form_offers_feishu_native_routes -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent route-form
+  proof `python -m pytest tests\test_app.py -q -k
+  "notification_route_operator_form_offers or
+  gateway_channels_endpoint_classifies_feishu"` (`13 passed, 207 deselected`),
+  `node --check src\openzues\web\static\app.js`, `ruff check
+  src\openzues\web tests\test_app.py`, and focused `git diff --check`.
+  Source/test checkpointed in `5b2c322e`.
+
+- Configured-channel plugin activation plans now accept an explicit
+  `only_channel_ids` scope and filter discovered channel owners before building
+  `pluginIds`, `entries`, and activation config, matching OpenClaw's
+  `onlyChannelIds` runtime load behavior. This closes `OZ-PLUGIN-00387`;
+  repo-wide parity remains estimated at ~99.9%, and runtime/CLI/doctor
+  native-bridge parity moves to ~99.999999996%.
+- Verified channel-scoped plugin activation with focused red/green
+  `python -m pytest tests\test_gateway_plugin_activation.py::test_resolve_configured_channel_plugin_plan_filters_explicit_channel_scope -q`
+  (`unexpected keyword argument 'only_channel_ids'` before implementation, then
+  `1 passed`), adjacent activation proof `python -m pytest
+  tests\test_gateway_plugin_activation.py -q` (`10 passed`), `ruff check
+  src\openzues\services\gateway_plugin_activation.py
+  tests\test_gateway_plugin_activation.py`, `mypy
+  src\openzues\services\gateway_plugin_activation.py`, and focused `git diff
+  --check`. Source/test checkpointed in `596771d6`.
 
 ## References
 

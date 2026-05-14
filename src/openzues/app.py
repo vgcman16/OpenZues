@@ -20,7 +20,7 @@ from pathlib import Path
 from time import perf_counter
 from types import SimpleNamespace
 from typing import Any, Literal, cast
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlparse
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -265,6 +265,7 @@ SLACK_EVENTS_MAX_BODY_BYTES = 1024 * 1024
 SLACK_SIGNATURE_TOLERANCE_SECONDS = 60 * 5
 LINE_WEBHOOK_MAX_RAW_BODY_BYTES = 64 * 1024
 ZALO_WEBHOOK_MAX_RAW_BODY_BYTES = 1024 * 1024
+GOOGLECHAT_WEBHOOK_MAX_RAW_BODY_BYTES = 16 * 1024
 SIGNAL_RECEIVE_MAX_RAW_BODY_BYTES = 1024 * 1024
 
 PLUGIN_DUPLICATE_SERVER_RE = re.compile(
@@ -605,6 +606,93 @@ def _zalo_configured_webhook_path(snapshot: Mapping[str, Any]) -> str | None:
     if not normalized:
         return None
     return normalized if normalized.startswith("/") else f"/{normalized}"
+
+
+def _googlechat_config_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> Mapping[str, Any] | None:
+    channels = snapshot.get("channels")
+    if not isinstance(channels, Mapping):
+        return None
+    googlechat_config = channels.get("googlechat")
+    if not isinstance(googlechat_config, Mapping):
+        googlechat_config = channels.get("google-chat")
+    if not isinstance(googlechat_config, Mapping):
+        return None
+    normalized_account_id = str(account_id or "default").strip() or "default"
+    accounts = googlechat_config.get("accounts")
+    if isinstance(accounts, Mapping):
+        direct = accounts.get(normalized_account_id)
+        if isinstance(direct, Mapping):
+            return {**googlechat_config, **direct}
+        lowered = normalized_account_id.lower()
+        for key, value in accounts.items():
+            if str(key).strip().lower() == lowered and isinstance(value, Mapping):
+                return {**googlechat_config, **value}
+    return googlechat_config
+
+
+def _googlechat_webhook_token_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> str | None:
+    googlechat_config = _googlechat_config_from_snapshot(snapshot, account_id=account_id)
+    if googlechat_config is None:
+        return None
+    for key in (
+        "webhookToken",
+        "systemIdToken",
+        "verificationToken",
+        "authToken",
+        "secretToken",
+        "secret",
+    ):
+        candidate = googlechat_config.get(key)
+        if isinstance(candidate, str):
+            token = candidate.strip()
+            if token:
+                return token
+    return None
+
+
+def _googlechat_configured_webhook_path(snapshot: Mapping[str, Any]) -> str | None:
+    googlechat_config = _googlechat_config_from_snapshot(snapshot, account_id=None)
+    if googlechat_config is None:
+        return None
+    raw_path = googlechat_config.get("webhookPath")
+    if not isinstance(raw_path, str):
+        webhook_url = googlechat_config.get("webhookUrl")
+        if isinstance(webhook_url, str):
+            parsed = urlparse(webhook_url.strip())
+            raw_path = parsed.path
+    if not isinstance(raw_path, str):
+        return None
+    normalized = raw_path.strip()
+    if not normalized or "?" in normalized or "#" in normalized:
+        return None
+    return normalized if normalized.startswith("/") else f"/{normalized}"
+
+
+def _googlechat_body_system_id_token(payload: Mapping[str, Any]) -> str | None:
+    authorization = payload.get("authorizationEventObject")
+    if not isinstance(authorization, Mapping):
+        return None
+    candidate = authorization.get("systemIdToken")
+    if not isinstance(candidate, str):
+        return None
+    token = candidate.strip()
+    return token or None
+
+
+def _bearer_token_from_authorization_header(header: str | None) -> str | None:
+    value = str(header or "").strip()
+    if not value.lower().startswith("bearer "):
+        return None
+    token = value[len("bearer ") :].strip()
+    return token or None
 
 
 def _valid_zalo_webhook_secret_token(
@@ -5125,6 +5213,84 @@ def create_app(
         fastapi_app.add_api_route(
             configured_zalo_webhook_path,
             handle_configured_zalo_webhook,
+            methods=["POST"],
+            include_in_schema=False,
+        )
+
+    async def dispatch_googlechat_webhook(request: Request) -> JSONResponse:
+        body = await request.body()
+        if len(body) > GOOGLECHAT_WEBHOOK_MAX_RAW_BODY_BYTES:
+            return JSONResponse({"error": "Payload too large"}, status_code=413)
+        content_type = request.headers.get("content-type", "")
+        if "application/json" not in content_type.lower():
+            return JSONResponse({"error": "Unsupported media type"}, status_code=415)
+        try:
+            payload = json.loads(body.decode("utf-8")) if body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return JSONResponse({"error": "Invalid webhook payload"}, status_code=400)
+        if not isinstance(payload, dict):
+            return JSONResponse({"error": "Invalid webhook payload"}, status_code=400)
+        event_type = payload.get("type") or payload.get("eventType")
+        common = payload.get("commonEventObject")
+        chat = payload.get("chat")
+        is_addon_payload = (
+            isinstance(common, Mapping)
+            and str(common.get("hostApp") or "").strip().upper() == "CHAT"
+            and isinstance(chat, Mapping)
+            and isinstance(chat.get("messagePayload"), Mapping)
+        )
+        if not isinstance(event_type, str) and not is_addon_payload:
+            return JSONResponse({"error": "Invalid webhook payload"}, status_code=400)
+        account_id = (
+            request.query_params.get("accountId")
+            or request.query_params.get("account_id")
+        )
+        config_service = getattr(active_ops_mesh_service, "gateway_config_service", None)
+        snapshot = (
+            config_service.build_snapshot()
+            if config_service is not None
+            else active_gateway_config_service.build_snapshot()
+        )
+        webhook_token = _googlechat_webhook_token_from_snapshot(
+            snapshot,
+            account_id=account_id,
+        )
+        if webhook_token is None:
+            return JSONResponse(
+                {"error": "Google Chat webhook token is not configured"},
+                status_code=503,
+            )
+        supplied_token = _bearer_token_from_authorization_header(
+            request.headers.get("authorization")
+        ) or _googlechat_body_system_id_token(cast(Mapping[str, Any], payload))
+        if supplied_token is None:
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        if not hmac.compare_digest(webhook_token, supplied_token):
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        await active_ops_mesh_service.handle_googlechat_webhook(
+            cast(Mapping[str, Any], payload),
+            account_id=account_id,
+        )
+        return JSONResponse({})
+
+    @fastapi_app.post("/googlechat")
+    async def handle_googlechat_webhook(request: Request) -> JSONResponse:
+        return await dispatch_googlechat_webhook(request)
+
+    configured_googlechat_webhook_path = _googlechat_configured_webhook_path(
+        active_gateway_config_service.build_snapshot()
+    )
+    if (
+        configured_googlechat_webhook_path is not None
+        and configured_googlechat_webhook_path != "/googlechat"
+    ):
+
+        async def handle_configured_googlechat_webhook(request: Request) -> JSONResponse:
+            return await dispatch_googlechat_webhook(request)
+
+        fastapi_app.add_api_route(
+            configured_googlechat_webhook_path,
+            handle_configured_googlechat_webhook,
             methods=["POST"],
             include_in_schema=False,
         )

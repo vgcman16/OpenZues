@@ -6,7 +6,7 @@ Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
   band of ~80-99.99999999999999999999999999999999999999999999999999%.
-- The active gateway/session/tool-contract family is estimated at ~99.969% of the
+- The active gateway/session/tool-contract family is estimated at ~99.970% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~99.987% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -15,7 +15,7 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999997% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.999999991% after the
   runtime bridge doctor posture, native ACP client interactive replay, ACP
   persisted task-record child-cap counting, ACP `streamTo="parent"`
   requester-context preflight, ACP `resumeSessionId` requester-context
@@ -28,7 +28,8 @@ Current percentage rollup:
   post-core resume mode, package post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback,
   startup-optimization doctor notes, installed runtime session/control-UI
   contribution capture, package
-  post-update completion-cache refresh, all-shell completion write-state,
+  post-update completion-cache refresh, package-prefixed update tag
+  normalization, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
   MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
   preflight, devices list/approve CLI, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice,
@@ -157,10 +158,11 @@ Current percentage rollup:
   outbound-media, delivery-queue-runtime, migration-runtime, migration helper,
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
-  infra-runtime, and media-runtime slices.
-- The gateway session/tool-contract family is estimated at ~99.969% after the
-  latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.99999976%
+  infra-runtime, media-runtime, package-channel command metadata, and
+  package-prefixed update tag normalization slices.
+- The gateway session/tool-contract family is estimated at ~99.970% after the
+  latest plugin-dangerous node command filtering slice.
+- The provider-native inbound/outbound breadth family is estimated at ~99.99999979%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Matrix implicit reply
   fanout, IRC media attachment formatting, Discord multi-media implicit reply
@@ -189,7 +191,8 @@ Current percentage rollup:
   allowFrom-store authorization, approval-store mutation, request listing, and
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
-  error text, and disabled-account capability action gating.
+  error text, disabled-account capability action gating, Google Chat add-on
+  body-token webhook ingress, and Mattermost native reaction actions.
 - The packaging/companion app breadth family is estimated at ~11.4% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
@@ -1567,9 +1570,10 @@ direct send path. Direct media directive parsing now also rejects unsafe
 `http://` remote media sources plus blocked HTTPS hosts/IPs, accepts
 OpenClaw-supported bare filenames with extensions, and strips traversal/home-dir
 local path directives without delivery. Telegram direct sends now lift simple
-safe HTTPS markdown images when the upstream channel adapter opts in; remaining
-media safety parity is markdown-image title/multiple and invalid-target edge
-cases plus any deeper provider-specific media edge cases.
+safe HTTPS markdown images when the upstream channel adapter opts in, including
+balanced-parenthesis URLs, title suffix stripping, multiple images, and invalid
+target retention; remaining media safety parity is deeper provider-specific
+media edge cases.
 Telegram native poll route sends now also forward OpenClaw's multi-select
 intent to Bot API payloads with `allows_multiple_answers`, preserving explicit
 multi-select and default single-choice behavior alongside anonymous, duration,
@@ -13492,6 +13496,164 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, and packaging/companion breadth moves to ~11.4%.
   Continue companion-app device flows, packaging/distribution, ACP lifecycle,
   provider media edges, or setup/onboarding gaps.
+- Current queue-head adjustment: Google Chat inbound webhooks now accept
+  Workspace add-on payloads that provide `authorizationEventObject.systemIdToken`
+  in the JSON body, normalize `chat.messagePayload` into a standard
+  `MESSAGE`, and route the message into the native session-backed delivery
+  path through `/googlechat`. Source/test checkpointed in `1f24c150`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.99999978%. Continue exact plugin
+  helper subpaths, provider media edges, packaging/distribution, or companion
+  breadth.
+- Current queue-head adjustment: `browser.act` now accepts OpenClaw-style click
+  requests with `doubleClick=true`, and the native browser runtime maps them to
+  `dblclick` while preserving ordinary click behavior. Source/test
+  checkpointed in `81f8ba7a`; repo-wide parity remains estimated at ~99.9%,
+  and browser/canvas/nodes/voice bounded-command parity moves to ~99.996%.
+  Continue exact plugin helper subpaths, provider media edges,
+  packaging/distribution, or companion breadth.
+- Current queue-head adjustment: native OpenClaw plugin SDK imports now expose
+  exact scoped and unscoped `test-helpers/import-side-effects` subpaths with
+  only `assertNoImportTimeSideEffects`, matching the upstream helper instead
+  of the generic SDK fallback. Source/test checkpointed in `6cdf4ea3`;
+  repo-wide parity remains estimated at ~99.9%, and runtime/CLI/doctor
+  native-bridge parity moves to ~99.99999998%. Continue provider media edges,
+  packaging/distribution, ACP lifecycle depth, or companion breadth.
+- Current queue-head adjustment: iOS companion node command policy now includes
+  OpenClaw's default `screen.record` command for iPhone/iPad/iOS node metadata
+  while preserving macOS/Windows default denial. Source/test checkpointed in
+  `deeb546d`; repo-wide parity remains estimated at ~99.9%, and packaging/
+  companion breadth moves to ~11.5%. Continue companion app device flows,
+  provider media edges, packaging/distribution, or ACP lifecycle depth.
+- Current queue-head adjustment: iOS companion node command policy now also
+  includes the upstream always-advertised `chat.push` and `talk.ptt.*`
+  commands for iPhone/iPad/iOS node metadata. Source/test checkpointed in
+  `ddd70a86`; repo-wide parity remains estimated at ~99.9%, and packaging/
+  companion breadth moves to ~11.6%. Continue companion app device flows,
+  provider media edges, packaging/distribution, or ACP lifecycle depth.
+- Current queue-head adjustment: iOS companion node command policy now includes
+  the upstream capability-gated camera, watch, contacts, calendar, and
+  reminders action commands for iPhone/iPad/iOS node metadata. Source/test
+  checkpointed in `dc72a787`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~11.7%. Continue companion app
+  device flows, provider media edges, packaging/distribution, or ACP lifecycle
+  depth.
+- Current queue-head adjustment: Android companion node command policy now
+  includes OpenClaw's action command defaults for camera snap/clip,
+  contacts/calendar add, and SMS send/search. Source/test checkpointed in
+  `669c3dc0`; repo-wide parity remains estimated at ~99.9%, and packaging/
+  companion breadth moves to ~11.8%. Continue companion app device flows,
+  provider media edges, packaging/distribution, or ACP lifecycle depth.
+- Current queue-head adjustment: macOS companion node command policy now
+  includes OpenClaw's `system.execApprovals.get` and
+  `system.execApprovals.set` defaults from `MacNodeModeCoordinator` without
+  widening Windows/Linux defaults. Source/test checkpointed in `5b9f287b`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~11.9%. Continue companion app device flows, provider media
+  edges, packaging/distribution, or ACP lifecycle depth.
+- Current queue-head adjustment: macOS companion node command policy now
+  includes OpenClaw's camera capability action commands `camera.snap` and
+  `camera.clip` from `MacNodeModeCoordinator`. Source/test checkpointed in
+  `dae05faa`; repo-wide parity remains estimated at ~99.9%, and packaging/
+  companion breadth moves to ~12.0%. Continue companion app device flows,
+  provider media edges, packaging/distribution, or ACP lifecycle depth.
+- Current queue-head adjustment: macOS companion node command policy now
+  includes OpenClaw's default `screen.record` command from
+  `MacNodeModeCoordinator` while preserving Windows/Linux default denial.
+  Source/test checkpointed in `29368f38`; repo-wide parity remains estimated
+  at ~99.9%, and packaging/companion breadth moves to ~12.1%. Continue
+  companion app device flows, provider media edges, packaging/distribution, or
+  ACP lifecycle depth.
+- Current queue-head correction: OpenZues gateway node command policy now
+  follows OpenClaw's authoritative `src/gateway/node-command-policy.ts`
+  defaults, keeping app-advertised dangerous companion actions gated by
+  explicit allowlist or dedicated gateway methods. This supersedes the
+  app-advertisement-only `OZ-COMP-001BY` through `OZ-COMP-001CE` tracker
+  claims. Source/test checkpointed in `e8417d65`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth returns to ~11.4%.
+  Continue companion app device flows, provider media edges,
+  packaging/distribution, or ACP lifecycle depth.
+- Current queue-head adjustment: plugin-dangerous node command filtering now
+  matches OpenClaw's `listDangerousPluginNodeCommands()` behavior by removing
+  fakeable plugin-provided dangerous commands from platform defaults until
+  explicitly re-added through `allow_commands`. Source/test checkpointed in
+  `6a6c12c6`; repo-wide parity remains estimated at ~99.9%, active
+  gateway/session/tool-contract parity moves to ~99.970%, and
+  browser/canvas/nodes/voice bounded-command parity moves to ~99.997%.
+  Continue provider media edges, packaging/distribution, ACP lifecycle depth,
+  or companion breadth.
+- Current queue-head adjustment: Mattermost provider-native
+  `message.action react` now accepts OpenClaw-style `messageId`/`postId`,
+  resolves the bot user through `/api/v4/users/me`, and dispatches add/remove
+  reaction mutations through Mattermost's native reactions endpoints.
+  Source/test checkpointed in `1f2783fa`; repo-wide parity remains estimated
+  at ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.99999979%. Continue provider media edges, packaging/distribution,
+  installed plugin activation, or companion breadth.
+- Current queue-head adjustment: installed/plugin package manifest channel
+  metadata now preserves OpenClaw-style `openclaw.channel.commands` defaults
+  and merges them into the matching `channelConfigs` entry. Source/test
+  checkpointed in `ce9eeaf8`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor native-bridge parity moves to ~99.99999999%.
+  Continue packaging/distribution, installed plugin activation depth, provider
+  media edges, or companion breadth.
+- Current queue-head adjustment: package update `--tag` handling now normalizes
+  package-name-prefixed tag input such as `openzues@beta` before registry
+  lookup and global install-spec construction, matching OpenClaw's
+  `normalizePackageTagInput` behavior. Source/test checkpointed in
+  `c2211ffb`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.999999991%. Continue
+  packaging/distribution, installed plugin activation depth, provider media
+  edges, or companion breadth.
+- Current queue-head adjustment: Tlon native route registration is now visible
+  in the operator notification route form and receives the native gateway
+  send/poll default event set. Source/test checkpointed in `5d035d5a`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.99999980%. Continue
+  packaging/distribution, installed plugin activation depth, provider media
+  edges, or companion breadth.
+- Current queue-head adjustment: git checkout updates now reject roots whose
+  `package.json` identifies a different package before runtime dispatch,
+  returning OpenClaw-shaped `reason: "not-openclaw-root"`. Source/test
+  checkpointed in `7e60f84a`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor native-bridge parity moves to ~99.999999992%.
+  Continue installed plugin activation depth, provider media edges,
+  packaging/distribution, or companion breadth.
+- Current queue-head adjustment: installed plugin runtime activation now adds
+  auto-enabled channel owner plugin IDs to both `plugins.allow` and
+  `plugins.entries[id].enabled`, matching OpenClaw's configured-channel
+  activation context. Source/test checkpointed in `30870984`; repo-wide parity
+  remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity
+  moves to ~99.999999993%. Continue installed plugin activation depth,
+  provider media edges, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: installed plugin runtime activation source
+  config now receives the same configured-channel activation metadata in
+  `activationSourceConfig.plugins.allow` and
+  `activationSourceConfig.plugins.entries[id].enabled` while keeping raw channel
+  config intact. Source/test checkpointed in `2e8f212c`; repo-wide parity
+  remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge parity
+  moves to ~99.999999994%. Continue installed plugin activation depth,
+  provider media edges, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: `openzues logs --plain` now handles broken
+  stdout pipes with an OpenClaw-shaped warning instead of failing the command.
+  Source/test checkpointed in `a4b1114c`; repo-wide parity remains estimated at
+  ~99.9%, and runtime/CLI/doctor native-bridge parity moves to
+  ~99.999999995%. Continue installed plugin activation depth, provider media
+  edges, packaging/distribution, or companion breadth.
+- Current queue-head adjustment: Feishu/Lark native route registration is now
+  visible in the operator notification route form and receives the native
+  gateway send/poll default event set. Source/test checkpointed in `5b2c322e`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.99999981%. Continue provider media
+  edges, installed plugin activation depth, packaging/distribution, or
+  companion breadth.
+- Current queue-head adjustment: configured-channel plugin activation plans now
+  honor an explicit `only_channel_ids` scope, avoiding accidental activation of
+  every configured channel owner during scoped runtime loads. Source/test
+  checkpointed in `596771d6`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor native-bridge parity moves to ~99.999999996%.
+  Continue provider media edges, installed plugin activation depth,
+  packaging/distribution, or companion breadth.
 - Current queue-head adjustment: direct provider-native outbound sends now
   lift `MEDIA:` directives out of visible message text and persist/deliver them
   as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;

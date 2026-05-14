@@ -134,12 +134,18 @@ def resolve_node_command_allowlist(
     device_family: str | None = None,
     allow_commands: Iterable[str] = (),
     deny_commands: Iterable[str] = (),
+    dangerous_plugin_commands: Iterable[str] = (),
 ) -> set[str]:
     platform_id = resolve_node_platform_id(platform, device_family)
+    dangerous_plugin_command_set = {
+        command.strip()
+        for command in dangerous_plugin_commands
+        if command.strip()
+    }
     allowed = {
         command.strip()
         for command in _PLATFORM_DEFAULTS.get(platform_id, _PLATFORM_DEFAULTS["unknown"])
-        if command.strip()
+        if command.strip() and command.strip() not in dangerous_plugin_command_set
     }
     for command in allow_commands:
         trimmed = command.strip()
