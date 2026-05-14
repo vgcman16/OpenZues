@@ -212,6 +212,41 @@ def test_verify_device_bootstrap_token_accepts_equivalent_public_key_encodings(
     }
 
 
+def test_verify_device_bootstrap_token_rejects_expired_legacy_ts_record(
+    tmp_path,
+) -> None:
+    token = "expired-token"
+    bootstrap_path = tmp_path / "devices" / "bootstrap.json"
+    bootstrap_path.parent.mkdir(parents=True)
+    bootstrap_path.write_text(
+        json.dumps(
+            {
+                token: {
+                    "token": token,
+                    "ts": 1,
+                    "issuedAtMs": 1,
+                    "profile": {
+                        "roles": ["operator"],
+                        "scopes": ["operator.read"],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    verified = verify_device_bootstrap_token(
+        base_dir=tmp_path,
+        token=token,
+        device_id="device-123",
+        public_key="public-key-123",
+        role="operator",
+        scopes=["operator.read"],
+    )
+
+    assert verified == {"ok": False, "reason": "bootstrap_token_invalid"}
+
+
 def test_get_bound_device_bootstrap_profile_requires_verified_identity(
     tmp_path,
 ) -> None:

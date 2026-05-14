@@ -24,6 +24,7 @@ from openzues.services.device_bootstrap_profile import (
 )
 
 DEVICE_BOOTSTRAP_TOKEN_TTL_SECONDS = 10 * 60
+_DEVICE_BOOTSTRAP_TOKEN_TTL_MS = DEVICE_BOOTSTRAP_TOKEN_TTL_SECONDS * 1000
 
 
 @dataclass(frozen=True, slots=True)
@@ -383,6 +384,17 @@ def _read_bootstrap_state(path: Path, *, now_ms: int) -> dict[str, dict[str, Any
             continue
         token = str(value.get("token") or key).strip()
         if not token:
+            continue
+        issued_at = value.get("issuedAtMs")
+        ts = value.get("ts")
+        record_ts = (
+            ts
+            if isinstance(ts, int | float)
+            else issued_at
+            if isinstance(issued_at, int | float)
+            else 0
+        )
+        if now_ms - int(record_ts) > _DEVICE_BOOTSTRAP_TOKEN_TTL_MS:
             continue
         expires_at = value.get("expiresAtMs")
         if isinstance(expires_at, int | float) and expires_at <= now_ms:
