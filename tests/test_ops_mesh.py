@@ -11634,6 +11634,122 @@ async def test_ops_mesh_service_send_lifts_telegram_markdown_image_with_parenthe
     assert delivery["event_payload"]["mediaUrls"] == ["https://example.com/a_(1).png"]
 
 
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_lifts_telegram_markdown_image_title_and_multiple(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-md-multiple"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-md-multiple-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message=(
+            'Before ![chart](https://example.com/chart.png "Quarterly chart")\n'
+            "Middle\n"
+            "![two](https://example.com/two.png)"
+        ),
+        idempotency_key="idem-telegram-md-multiple-directive-send",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(provider_requests) == 1
+    assert provider_requests[0].message == "Before\nMiddle"
+    assert provider_requests[0].media_urls == (
+        "https://example.com/chart.png",
+        "https://example.com/two.png",
+    )
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == "Before\nMiddle"
+    assert "mediaUrl" not in delivery["event_payload"]
+    assert delivery["event_payload"]["mediaUrls"] == [
+        "https://example.com/chart.png",
+        "https://example.com/two.png",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("message", "idempotency_key"),
+    [
+        ("Caption ![x](http://example.com/a.png)", "idem-telegram-md-invalid-http"),
+        ("Caption ![x](file:///etc/passwd)", "idem-telegram-md-invalid-file"),
+        ("Caption ![x](https://127.0.0.1/a.png)", "idem-telegram-md-invalid-localhost"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_keeps_invalid_telegram_markdown_images_as_text(
+    message: str,
+    idempotency_key: str,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-md-invalid"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {"messageId": "provider-md-invalid-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message=message,
+        idempotency_key=idempotency_key,
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(provider_requests) == 1
+    assert provider_requests[0].message == message
+    assert provider_requests[0].media_urls == ()
+    assert delivery is not None
+    assert delivery["event_payload"]["message"] == message
+    assert "mediaUrl" not in delivery["event_payload"]
+    assert "mediaUrls" not in delivery["event_payload"]
+
+
 @pytest.mark.parametrize(
     ("media_directive", "idempotency_key"),
     [
