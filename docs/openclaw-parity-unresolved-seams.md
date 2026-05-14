@@ -160,7 +160,7 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.99999977%
+- The provider-native inbound/outbound breadth family is estimated at ~99.99999978%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Matrix implicit reply
   fanout, IRC media attachment formatting, Discord multi-media implicit reply
@@ -189,7 +189,8 @@ Current percentage rollup:
   allowFrom-store authorization, approval-store mutation, request listing, and
   native pairing list/approve plus approval-notification CLI,
   command-owner bootstrap, list default, bootstrap explanation, not-found
-  error text, and disabled-account capability action gating.
+  error text, disabled-account capability action gating, and Google Chat
+  add-on body-token webhook ingress.
 - The packaging/companion app breadth family is estimated at ~11.4% after QR
   setup-code safety/SecretRef slices, device pairing CLI list/approve,
   approve-preview gateway/auth flag preservation, remote device list/approve
@@ -13493,6 +13494,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, and packaging/companion breadth moves to ~11.4%.
   Continue companion-app device flows, packaging/distribution, ACP lifecycle,
   provider media edges, or setup/onboarding gaps.
+- Current queue-head adjustment: Google Chat inbound webhooks now accept
+  Workspace add-on payloads that provide `authorizationEventObject.systemIdToken`
+  in the JSON body, normalize `chat.messagePayload` into a standard
+  `MESSAGE`, and route the message into the native session-backed delivery
+  path through `/googlechat`. Source/test checkpointed in `1f24c150`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.99999978%. Continue the mapped browser
+  `browser.act` `doubleClick` seam, then exact plugin helper subpaths,
+  provider media edges, packaging/distribution, or companion breadth.
 - Current queue-head adjustment: direct provider-native outbound sends now
   lift `MEDIA:` directives out of visible message text and persist/deliver them
   as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;

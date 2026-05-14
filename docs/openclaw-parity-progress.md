@@ -26,7 +26,7 @@
   scope/caller/visibility/disconnect guards; companion apps remain broadly
   open.
 - Estimated runtime/CLI/doctor native-bridge parity: ~99.99999997% after the runtime bridge doctor posture, native ACP client interactive replay, ACP persisted task-record child-cap counting, ACP `streamTo="parent"` requester-context preflight, ACP `resumeSessionId` requester-context preflight, ACP `resumeSessionId` ownership enforcement, ACP model/thinking override propagation, ACP configured runtime agent alias mapping, ACP runtime-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP thread-binding dispatch-failure cleanup, ACP accepted-spawn registration-failure cleanup, Docker runtime home bootstrap, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice, native Zalo pairing list/approve/notify CLI, command-owner bootstrap, list default, bootstrap explanation, not-found error text, and disabled-account capability action gating, package-update downgrade confirmation, stored-channel package update dispatch, package-update post-core resume mode, package-update post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback, startup-optimization doctor notes, installed runtime session/control-UI contribution capture, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch/unhealthy-snapshot restart-health failure with restart-log/status follow-up diagnostics, gateway health `serverVersion` projection, `gateway status --deep` CLI alias coverage, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect human typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, deeper ACP bridge lifecycle edge cases, deeper installed plugin module import/activation, and broader runtime command ergonomics.
-- Estimated provider-native inbound/outbound breadth: ~99.99999977% after Slack
+- Estimated provider-native inbound/outbound breadth: ~99.99999978% after Slack
   event/interactions/slash/signing coverage, command aliases/plugin command
   injection, WhatsApp reply fanout, Telegram media reply fanout/caption
   passthrough, Feishu media implicit reply fanout, Matrix implicit reply
@@ -55,8 +55,9 @@
   text follow-up delivery plus QQBot inline media text ordering/result
   metadata, direct outbound `MEDIA:` / `[[audio_as_voice]]` /
   `[[reply_to:...]]` / `[[reply_to_current]]` directive lifting,
-  Matrix media/text implicit reply fanout, IRC media attachment formatting, and
-  Discord multi-media implicit reply fanout.
+  Matrix media/text implicit reply fanout, IRC media attachment formatting,
+  Discord multi-media implicit reply fanout, and Google Chat add-on
+  body-token webhook ingress.
 - Runtime helper addendum: imported `agent-runtime` core helper coverage is
   now verified in `a8e871a3` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `agent-runtime` model-selection helper
@@ -25867,6 +25868,29 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
   Test checkpointed in `8d137825`; implementation was covered by the
   markdown-image scanner landed in `75bf8a39`.
+
+- Google Chat inbound webhooks now accept Google Workspace add-on payloads
+  carrying `authorizationEventObject.systemIdToken` in the JSON body, normalize
+  `chat.messagePayload` into a standard `MESSAGE` event, route it into the
+  native session-backed delivery path, and expose the default `/googlechat`
+  FastAPI endpoint with config-backed token preflight. This closes
+  `OZ-PROV-001HL`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.99999978%.
+- Verified Google Chat add-on webhook ingress with focused red/green
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_handle_googlechat_webhook_delivers_addon_message tests\test_googlechat_webhook.py::test_googlechat_webhook_accepts_addon_body_system_id_token -q`
+  (`2 passed` after implementation; the service proof failed first with a
+  missing `handle_googlechat_webhook`, and the app proof failed first with a
+  `404` for `/googlechat`), adjacent provider proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "googlechat and (webhook or native_route or
+  direct_channel_message or upload_file or react_remove)"` (`7 passed, 521
+  deselected`), adjacent app proof `python -m pytest
+  tests\test_googlechat_webhook.py tests\test_app.py -q -k
+  "googlechat_webhook or msteams_messages_endpoint_rejects_failed_jwt_before_json_body
+  or gateway_channels_endpoint_classifies_googlechat_native_route"` (`3
+  passed, 216 deselected`), `ruff check src\openzues\services\ops_mesh.py
+  src\openzues\app.py tests\test_ops_mesh.py tests\test_googlechat_webhook.py`,
+  and `mypy src\openzues\services\ops_mesh.py src\openzues\app.py`.
+  Source/test checkpointed in `1f24c150`.
 
 ## References
 
