@@ -25167,6 +25167,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
   --check`. Source/test checkpointed in `5dda873e`.
 
+- Native `openzues qr` now derives bind-based setup-code URL schemes from
+  `gateway.tls.enabled`, so custom/LAN/tailnet/settings bind URLs use `wss://`
+  when gateway TLS is enabled and `ws://` otherwise. This closes
+  `OZ-COMP-001BB`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~9.1%.
+- Verified QR bind TLS scheme parity with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_uses_tls_scheme_for_custom_bind_host_when_enabled -q`
+  (`1 failed` before implementation because the URL remained `ws://`, then `1
+  passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py -q -k
+  "qr_"` (`29 passed, 616 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+  --check`. Source/test checkpointed in `51efda66`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

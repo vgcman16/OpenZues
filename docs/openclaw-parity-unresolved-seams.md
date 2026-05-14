@@ -13275,3 +13275,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~99.9%, and packaging/companion breadth moves to ~9.0%.
   Continue companion-app device flows, packaging/distribution, ACP lifecycle,
   provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now derives bind-based
+  setup-code URL schemes from `gateway.tls.enabled` for custom/LAN/tailnet and
+  settings fallbacks. Source/test checkpointed in `51efda66`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to ~9.1%.
+  Continue companion-app device flows, packaging/distribution, ACP lifecycle,
+  provider action breadth, or setup/onboarding gaps.
