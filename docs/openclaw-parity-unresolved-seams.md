@@ -13322,3 +13322,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and packaging/companion breadth moves to ~9.7%. Continue companion-app
   device flows, packaging/distribution, ACP lifecycle, provider action breadth,
   or setup/onboarding gaps.
+- Current queue-head adjustment: native Zalo direct-DM pairing replies now
+  preserve OpenClaw profile/container command context in the owner approval
+  command, matching upstream `buildPairingReply` command formatting.
+  Source/test checkpointed in `a5574ff2`; repo-wide parity remains estimated
+  at ~99.9%, and packaging/companion breadth moves to ~9.8%. Continue
+  companion-app device flows, packaging/distribution, ACP lifecycle, provider
+  action breadth, or setup/onboarding gaps.
