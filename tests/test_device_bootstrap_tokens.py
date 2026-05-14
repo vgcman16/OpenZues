@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from openzues.services.device_bootstrap_tokens import (
+    clear_device_bootstrap_tokens,
     get_device_bootstrap_token_profile,
     issue_device_bootstrap_token,
     revoke_device_bootstrap_token,
@@ -91,3 +92,17 @@ def test_revoke_device_bootstrap_token_removes_specific_trimmed_token(
     }
     assert missing == {"removed": False}
     assert issued.token not in state
+
+
+def test_clear_device_bootstrap_tokens_removes_outstanding_tokens(tmp_path) -> None:
+    first = issue_device_bootstrap_token(base_dir=tmp_path)
+    second = issue_device_bootstrap_token(base_dir=tmp_path)
+
+    cleared = clear_device_bootstrap_tokens(base_dir=tmp_path)
+    cleared_again = clear_device_bootstrap_tokens(base_dir=tmp_path)
+    state = json.loads((tmp_path / "devices" / "bootstrap.json").read_text())
+
+    assert first.token != second.token
+    assert cleared == {"removed": 2}
+    assert cleared_again == {"removed": 0}
+    assert state == {}

@@ -91,6 +91,14 @@ def revoke_device_bootstrap_token(
     return {"removed": True, "record": record}
 
 
+def clear_device_bootstrap_tokens(*, base_dir: Path) -> dict[str, int]:
+    bootstrap_path = _bootstrap_token_path(base_dir)
+    state = _read_bootstrap_state(bootstrap_path, now_ms=int(time.time() * 1000))
+    removed = len(state)
+    _write_bootstrap_state(bootstrap_path, {})
+    return {"removed": removed}
+
+
 def _issued_bootstrap_profile(
     *,
     profile: Mapping[str, Iterable[str]] | None,
