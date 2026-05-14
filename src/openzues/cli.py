@@ -100777,16 +100777,16 @@ def qr_command(
                 config_snapshot = _resolve_qr_local_gateway_password_secret_ref(
                     config_snapshot
                 )
+        auth_label = _resolve_qr_auth_label(
+            token=token,
+            password=password,
+            remote=remote,
+            config_snapshot=config_snapshot,
+        )
         gateway_url, url_source = _resolve_qr_gateway_url(
             app_settings=app_settings,
             url=url,
             public_url=public_url,
-            remote=remote,
-            config_snapshot=config_snapshot,
-        )
-        auth_label = _resolve_qr_auth_label(
-            token=token,
-            password=password,
             remote=remote,
             config_snapshot=config_snapshot,
         )
