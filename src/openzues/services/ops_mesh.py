@@ -13151,6 +13151,7 @@ def _normalize_direct_channel_media_urls(
 _DIRECT_CHANNEL_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 _DIRECT_CHANNEL_FILE_EXT_RE = re.compile(r"\.\w{1,10}$")
 _DIRECT_CHANNEL_TRAVERSAL_SEGMENT_RE = re.compile(r"(?:^|[/\\])\.\.(?:[/\\]|$)")
+_DIRECT_CHANNEL_MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]\n]*\]\(([^)\n]+)\)")
 
 
 def _looks_like_direct_channel_media_source(value: str) -> bool:
@@ -13181,6 +13182,42 @@ def _direct_channel_media_source_is_rejected_local_path(candidate: str) -> bool:
     return not _DIRECT_CHANNEL_SCHEME_RE.match(
         candidate
     ) and _direct_channel_media_source_has_traversal_or_home_prefix(candidate)
+
+
+def _direct_channel_extract_markdown_images_enabled(channel: str) -> bool:
+    return str(channel or "").strip().lower() == "telegram"
+
+
+def _direct_channel_markdown_image_target(raw_target: str) -> str | None:
+    target = raw_target.strip()
+    if not target:
+        return None
+    if any(character.isspace() for character in target):
+        target = target.split()[0]
+    target = target.strip("`\"'<>")
+    if not re.match(r"(?i)^https://", target):
+        return None
+    if len(target) > 4096:
+        return None
+    return target if _direct_channel_remote_media_url_allowed(target) else None
+
+
+def _split_direct_channel_markdown_image_media(line: str) -> tuple[str, list[str]]:
+    if len(line) > 4096 or "![" not in line:
+        return line, []
+    media_urls: list[str] = []
+
+    def replace(match: re.Match[str]) -> str:
+        target = _direct_channel_markdown_image_target(match.group(1))
+        if target is None:
+            return match.group(0)
+        media_urls.append(target)
+        return " "
+
+    cleaned = _DIRECT_CHANNEL_MARKDOWN_IMAGE_RE.sub(replace, line)
+    if not media_urls:
+        return line, []
+    return " ".join(cleaned.split()), media_urls
 
 
 def _direct_channel_bare_media_filename_allowed(candidate: str) -> bool:
@@ -13278,12 +13315,23 @@ def _strip_direct_channel_reply_directive(message: str) -> tuple[str, str | None
 
 def _split_direct_channel_media_directives(
     message: str,
+    *,
+    extract_markdown_images: bool = False,
 ) -> tuple[str, list[str], bool, str | None, bool]:
     kept_lines: list[str] = []
     media_urls: list[str] = []
     for line in str(message or "").splitlines():
         stripped = line.strip()
         if not stripped.upper().startswith("MEDIA:"):
+            if extract_markdown_images:
+                cleaned_line, markdown_media_urls = (
+                    _split_direct_channel_markdown_image_media(line)
+                )
+                if markdown_media_urls:
+                    media_urls.extend(markdown_media_urls)
+                    if cleaned_line:
+                        kept_lines.append(cleaned_line)
+                    continue
             kept_lines.append(line)
             continue
         payload = stripped[len("MEDIA:") :].strip()
@@ -31792,7 +31840,12 @@ class OpsMeshService:
             directive_audio_as_voice,
             directive_reply_to_id,
             directive_reply_to_current,
-        ) = _split_direct_channel_media_directives(message)
+        ) = _split_direct_channel_media_directives(
+            message,
+            extract_markdown_images=_direct_channel_extract_markdown_images_enabled(
+                channel
+            ),
+        )
         combined_media_urls = list(media_urls or [])
         combined_media_urls.extend(directive_media_urls)
         normalized_media_urls = _normalize_direct_channel_media_urls(
