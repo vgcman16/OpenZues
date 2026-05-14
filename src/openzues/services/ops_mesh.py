@@ -5535,6 +5535,37 @@ def _zalo_pairing_code(existing_codes: set[str] | None = None) -> str:
     raise RuntimeError("Failed to generate a unique Zalo pairing code.")
 
 
+_OPENCLAW_CLI_PREFIX_RE = re.compile(r"^(?:(?:pnpm|npm|bunx|npx)\s+openclaw\b|openclaw\b)")
+_OPENCLAW_CLI_CONTAINER_HINT_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$")
+_OPENCLAW_CLI_PROFILE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$", re.I)
+
+
+def _openclaw_cli_profile_name(raw: str | None) -> str | None:
+    profile = (raw or "").strip()
+    if not profile or profile.lower() == DEFAULT_ACCOUNT_ID:
+        return None
+    return profile if _OPENCLAW_CLI_PROFILE_NAME_RE.fullmatch(profile) else None
+
+
+def _format_openclaw_cli_command(command: str) -> str:
+    if not _OPENCLAW_CLI_PREFIX_RE.search(command):
+        return command
+    raw_container = os.environ.get("OPENCLAW_CONTAINER_HINT", "").strip()
+    container = (
+        raw_container
+        if raw_container and _OPENCLAW_CLI_CONTAINER_HINT_RE.fullmatch(raw_container)
+        else None
+    )
+    profile = _openclaw_cli_profile_name(os.environ.get("OPENCLAW_PROFILE"))
+    if container is not None:
+        addition = f"--container {container}"
+    elif profile is not None:
+        addition = f"--profile {profile}"
+    else:
+        return command
+    return _OPENCLAW_CLI_PREFIX_RE.sub(lambda match: f"{match.group(0)} {addition}", command, 1)
+
+
 def _zalo_pairing_store_dir(state_dir: Path) -> Path:
     return state_dir / "settings" / "oauth"
 
@@ -5617,7 +5648,7 @@ def _zalo_pairing_add_allow_from_entry(path: Path, entry: str) -> list[str]:
 
 
 def _zalo_pairing_reply_text(*, code: str, sender_id_line: str) -> str:
-    approve_command = f"openclaw pairing approve zalo {code}"
+    approve_command = _format_openclaw_cli_command(f"openclaw pairing approve zalo {code}")
     return "\n".join(
         [
             "OpenClaw: access not configured.",
