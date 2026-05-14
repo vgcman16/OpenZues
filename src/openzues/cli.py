@@ -1634,6 +1634,23 @@ def _emit_channel_logs(payload: dict[str, object], *, json_output: bool) -> None
         typer.echo(" ".join(parts))
 
 
+def _emit_logs_tail(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(f"Log file: {payload.get('file') or ''}")
+    if payload.get("truncated"):
+        typer.echo("Log tail truncated.", err=True)
+    if payload.get("reset"):
+        typer.echo("Log cursor reset.", err=True)
+    lines = payload.get("lines")
+    if not isinstance(lines, list) or not lines:
+        typer.echo("No log lines.")
+        return
+    for line in lines:
+        typer.echo(str(line))
+
+
 def _msteams_delegated_auth_config_patch(account_id: str | None) -> dict[str, object]:
     normalized_account_id = (
         _optional_cli_string(account_id)
@@ -99426,6 +99443,23 @@ async def _build_channel_logs_payload(
     }
 
 
+async def _build_logs_tail_payload(
+    services: CliServices,
+    *,
+    cursor: int | None,
+    limit: int,
+    max_bytes: int,
+) -> dict[str, object]:
+    try:
+        return await services.gateway_logs.read_tail(
+            cursor=cursor,
+            limit=limit,
+            max_bytes=max_bytes,
+        )
+    except GatewayLogsUnavailableError as exc:
+        raise ValueError(str(exc)) from exc
+
+
 async def _build_operator_dashboard(services: CliServices) -> DashboardView | SimpleNamespace:
     live_dashboard = await _try_live_dashboard_view(services.settings)
     if live_dashboard is not None:
@@ -100713,6 +100747,50 @@ def health_command(
             typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_health(payload, json_output=json_output)
+
+
+@app.command("logs")
+def logs_command(
+    limit: int = typer.Option(
+        200,
+        "--limit",
+        min=1,
+        max=5_000,
+        help="Maximum log lines to return.",
+    ),
+    max_bytes: int = typer.Option(
+        250_000,
+        "--max-bytes",
+        min=1,
+        max=1_000_000,
+        help="Maximum bytes to read from the log file.",
+    ),
+    cursor: int | None = typer.Option(
+        None,
+        "--cursor",
+        min=0,
+        help="Resume reading from a previous cursor.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the log tail as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_logs_tail_payload(
+            services,
+            cursor=cursor,
+            limit=limit,
+            max_bytes=max_bytes,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_logs_tail(payload, json_output=json_output)
 
 
 @app.command("qr")
