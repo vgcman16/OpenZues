@@ -13949,6 +13949,10 @@ def test_plugins_list_json_preserves_package_manifest_runtime_metadata(
                         "label": "Matrix",
                         "blurb": "Matrix package setup.",
                         "preferOver": ["matrix-legacy", ""],
+                        "commands": {
+                            "nativeCommandsAutoEnabled": True,
+                            "nativeSkillsAutoEnabled": False,
+                        },
                     },
                 },
             }
@@ -13987,12 +13991,20 @@ def test_plugins_list_json_preserves_package_manifest_runtime_metadata(
         "label": "Matrix",
         "blurb": "Matrix package setup.",
         "preferOver": ["matrix-legacy"],
+        "commands": {
+            "nativeCommandsAutoEnabled": True,
+            "nativeSkillsAutoEnabled": False,
+        },
     }
     assert plugin["channelConfigs"]["matrix"] == {
         "schema": {"type": "object"},
         "label": "Matrix",
         "description": "Matrix package setup.",
         "preferOver": ["matrix-legacy"],
+        "commands": {
+            "nativeCommandsAutoEnabled": True,
+            "nativeSkillsAutoEnabled": False,
+        },
     }
 
 

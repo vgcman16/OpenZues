@@ -95969,6 +95969,22 @@ def _plugin_package_channel_catalog_meta(value: object) -> dict[str, object]:
     prefer_over = _plugin_manifest_string_list(value.get("preferOver"))
     if prefer_over:
         metadata["preferOver"] = prefer_over
+    commands = _plugin_package_channel_command_defaults(value.get("commands"))
+    if commands:
+        metadata["commands"] = commands
+    return metadata
+
+
+def _plugin_package_channel_command_defaults(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    metadata: dict[str, object] = {}
+    native_commands_auto_enabled = value.get("nativeCommandsAutoEnabled")
+    if isinstance(native_commands_auto_enabled, bool):
+        metadata["nativeCommandsAutoEnabled"] = native_commands_auto_enabled
+    native_skills_auto_enabled = value.get("nativeSkillsAutoEnabled")
+    if isinstance(native_skills_auto_enabled, bool):
+        metadata["nativeSkillsAutoEnabled"] = native_skills_auto_enabled
     return metadata
 
 
@@ -96313,6 +96329,10 @@ def _merge_package_channel_meta(
         prefer_over = _plugin_manifest_string_list(channel.get("preferOver"))
         if prefer_over:
             config["preferOver"] = prefer_over
+    if not _plugin_package_channel_command_defaults(config.get("commands")):
+        commands = _plugin_package_channel_command_defaults(channel.get("commands"))
+        if commands:
+            config["commands"] = commands
     merged_configs[channel_id] = config
     return merged_configs
 
