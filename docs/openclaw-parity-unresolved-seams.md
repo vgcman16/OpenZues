@@ -15,7 +15,7 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999999% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.999999991% after the
   runtime bridge doctor posture, native ACP client interactive replay, ACP
   persisted task-record child-cap counting, ACP `streamTo="parent"`
   requester-context preflight, ACP `resumeSessionId` requester-context
@@ -28,7 +28,8 @@ Current percentage rollup:
   post-core resume mode, package post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback,
   startup-optimization doctor notes, installed runtime session/control-UI
   contribution capture, package
-  post-update completion-cache refresh, all-shell completion write-state,
+  post-update completion-cache refresh, package-prefixed update tag
+  normalization, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
   MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
   preflight, devices list/approve CLI, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice,
@@ -157,7 +158,8 @@ Current percentage rollup:
   outbound-media, delivery-queue-runtime, migration-runtime, migration helper,
   outbound-send-deps, command-status-runtime, reply-runtime,
   reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
-  infra-runtime, media-runtime, and package-channel command metadata slices.
+  infra-runtime, media-runtime, package-channel command metadata, and
+  package-prefixed update tag normalization slices.
 - The gateway session/tool-contract family is estimated at ~99.970% after the
   latest plugin-dangerous node command filtering slice.
 - The provider-native inbound/outbound breadth family is estimated at ~99.99999979%
@@ -13595,6 +13597,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and runtime/CLI/doctor native-bridge parity moves to ~99.99999999%.
   Continue packaging/distribution, installed plugin activation depth, provider
   media edges, or companion breadth.
+- Current queue-head adjustment: package update `--tag` handling now normalizes
+  package-name-prefixed tag input such as `openzues@beta` before registry
+  lookup and global install-spec construction, matching OpenClaw's
+  `normalizePackageTagInput` behavior. Source/test checkpointed in
+  `c2211ffb`; repo-wide parity remains estimated at ~99.9%, and
+  runtime/CLI/doctor native-bridge parity moves to ~99.999999991%. Continue
+  packaging/distribution, installed plugin activation depth, provider media
+  edges, or companion breadth.
 - Current queue-head adjustment: direct provider-native outbound sends now
   lift `MEDIA:` directives out of visible message text and persist/deliver them
   as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;
