@@ -33,6 +33,22 @@ def test_macos_allowlist_includes_openclaw_exec_approval_commands() -> None:
     ) == declared
 
 
+def test_macos_allowlist_includes_openclaw_camera_action_commands() -> None:
+    allowlist = resolve_node_command_allowlist(
+        platform="macOS 26.3.1",
+        device_family="MacBook Pro",
+    )
+
+    declared = ("camera.snap", "camera.clip")
+
+    for command in declared:
+        assert command in allowlist
+    assert normalize_declared_node_commands(
+        declared,
+        allowlist=allowlist,
+    ) == declared
+
+
 def test_windows_allowlist_matches_openclaw_companion_defaults() -> None:
     allowlist = resolve_node_command_allowlist(
         platform="Windows 11",

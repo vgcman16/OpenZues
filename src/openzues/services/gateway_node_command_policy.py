@@ -15,6 +15,7 @@ _CANVAS_COMMANDS = (
 _CAMERA_COMMANDS = ("camera.list",)
 _IOS_CAMERA_COMMANDS = (*_CAMERA_COMMANDS, "camera.snap", "camera.clip")
 _ANDROID_CAMERA_COMMANDS = _IOS_CAMERA_COMMANDS
+_MACOS_CAMERA_COMMANDS = _IOS_CAMERA_COMMANDS
 _LOCATION_COMMANDS = ("location.get",)
 _NOTIFICATION_COMMANDS = ("notifications.list",)
 _ANDROID_NOTIFICATION_COMMANDS = (*_NOTIFICATION_COMMANDS, "notifications.actions")
@@ -96,7 +97,7 @@ _PLATFORM_DEFAULTS: dict[str, tuple[str, ...]] = {
     ),
     "macos": (
         *_CANVAS_COMMANDS,
-        *_CAMERA_COMMANDS,
+        *_MACOS_CAMERA_COMMANDS,
         *_LOCATION_COMMANDS,
         *_DEVICE_COMMANDS,
         *_CONTACTS_COMMANDS,
