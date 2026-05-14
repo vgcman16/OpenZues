@@ -13153,10 +13153,51 @@ def _looks_like_direct_channel_media_source(value: str) -> bool:
     if not candidate:
         return False
     if re.match(r"(?i)^https?://", candidate):
-        return candidate.lower().startswith("https://")
+        return _direct_channel_remote_media_url_allowed(candidate)
     if re.match(r"(?i)^(file://|/|[a-z]:[\\/]|\\\\|\.{1,2}/|~)", candidate):
         return True
     return ("/" in candidate or "\\" in candidate) and "." in candidate
+
+
+def _direct_channel_remote_media_url_allowed(value: str) -> bool:
+    parsed = urlparse(value)
+    if parsed.scheme.lower() != "https":
+        return False
+    if parsed.username or parsed.password:
+        return False
+    hostname = parsed.hostname
+    if hostname is None:
+        return False
+    return not _direct_channel_remote_media_host_blocked(hostname)
+
+
+def _direct_channel_remote_media_host_blocked(hostname: str) -> bool:
+    normalized = hostname.strip().lower().strip("[]").rstrip(".")
+    if not normalized:
+        return True
+    if any(label == "" for label in normalized.split(".")):
+        return True
+    if (
+        normalized == "localhost"
+        or normalized == "localhost.localdomain"
+        or normalized == "metadata.google.internal"
+        or normalized.endswith(".localhost")
+        or normalized.endswith(".local")
+        or normalized.endswith(".internal")
+    ):
+        return True
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return "." not in normalized
+    return (
+        address.is_loopback
+        or address.is_link_local
+        or address.is_private
+        or address.is_reserved
+        or address.is_multicast
+        or address.is_unspecified
+    )
 
 
 _DIRECT_CHANNEL_AUDIO_AS_VOICE_RE = re.compile(
