@@ -205,6 +205,54 @@ def test_resolve_configured_channel_plugin_plan_projects_activation_config() -> 
     }
 
 
+def test_resolve_configured_channel_plugin_plan_filters_explicit_channel_scope() -> None:
+    plugins = [
+        {
+            "id": "telegram-native",
+            "channels": ["telegram"],
+            "origin": "bundled",
+            "enabledByDefault": False,
+        },
+        {
+            "id": "discord-native",
+            "channels": ["discord"],
+            "origin": "bundled",
+            "enabledByDefault": False,
+        },
+    ]
+
+    assert resolve_configured_channel_plugin_plan(
+        plugins=plugins,
+        config={
+            "channels": {
+                "telegram": {"botToken": "configured"},
+                "discord": {"botToken": "configured"},
+            }
+        },
+        only_channel_ids=["discord"],
+    ) == {
+        "scope": "configured-channels",
+        "channelIds": ["discord"],
+        "pluginIds": ["discord-native"],
+        "entries": [
+            {
+                "channelId": "discord",
+                "sources": ["explicit-config"],
+                "effective": True,
+                "pluginIds": ["discord-native"],
+                "blockedReasons": [],
+            }
+        ],
+        "diagnostics": [],
+        "activationConfig": {
+            "plugins": {
+                "allow": ["discord-native"],
+                "entries": {"discord-native": {"enabled": True}},
+            }
+        },
+    }
+
+
 def test_resolve_configured_channel_plugin_plan_respects_disabled_owner() -> None:
     plugins = _activation_plugins()
 
