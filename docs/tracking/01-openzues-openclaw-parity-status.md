@@ -2,7 +2,7 @@
 
 Agent report source: Gauss
 
-Last updated: 2026-05-13
+Last updated: 2026-05-14
 
 Primary ledgers:
 
@@ -23,10 +23,10 @@ may lag behind this tracker.
 | Provider-native inbound/outbound breadth | ~99.999999% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Matrix implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot structured self-closing media tags, QQBot reply message sequencing, QQBot local media file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot file-media text follow-up delivery, QQBot direct image/video media text follow-up delivery, QQBot inline media text ordering/result metadata, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.99999992% | High for bounded native bridge | ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
-| Packaging/companion app breadth | ~8.5% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, and QR device-pair publicUrl fallback are landed; companion apps remain mostly open |
+| Packaging/companion app breadth | ~8.6% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, and QR configured remote URL fallback/validation are landed; companion apps remain mostly open |
 
-Latest verified adjustment: `OZ-COMP-001AV` QR device-pair publicUrl fallback
-moves packaging/companion breadth to ~8.5%; repo-wide OpenClaw
+Latest verified adjustment: `OZ-COMP-001AW` QR configured remote URL fallback/validation
+moves packaging/companion breadth to ~8.6%; repo-wide OpenClaw
 parity remains estimated at ~99.9%.
 
 ## Implemented / Locked Bounded Areas
@@ -11507,6 +11507,26 @@ parity remains estimated at ~99.9%.
     (`1 failed` before implementation because loopback fallback rejected setup
     generation, then `1 passed`), adjacent QR CLI proof
     `python -m pytest tests\test_cli.py -q -k "qr_"` (`19 passed, 616
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AW` QR configured remote URL fallback/validation.
+  - Source: `openclaw-main/src/pairing/setup-code.ts`,
+    `openclaw-main/src/pairing/setup-code.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: non-remote `openzues qr` validates configured
+    `gateway.remote.url` before bind fallback and uses a valid configured
+    remote URL as the post-Tailscale setup-code URL fallback when no explicit
+    CLI URL or device-pair public URL is provided.
+  - Evidence required: focused configured remote URL proof, adjacent QR CLI
+    proof, ruff, mypy
+  - Status: checkpointed in `ce3f78cd`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_uses_configured_remote_url_as_local_fallback_when_url_omitted tests\test_cli.py::test_qr_rejects_invalid_configured_remote_url_before_bind_fallback -q`
+    (`2 failed` before implementation because configured remote URL was
+    ignored or validated too late, then `2 passed`), adjacent QR CLI proof
+    `python -m pytest tests\test_cli.py -q -k "qr_"` (`21 passed, 616
     deselected`), ruff, mypy, and focused `git diff --check`.
 
 ## Update Rule

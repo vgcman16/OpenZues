@@ -25095,6 +25095,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
   focused `git diff --check`. Source/test checkpointed in `d336dc98`.
 
+- Native `openzues qr` now validates configured `gateway.remote.url` before
+  falling back to bind-derived URLs and uses a valid remote URL as the
+  post-Tailscale non-remote setup-code fallback, matching OpenClaw's pairing
+  resolver. This closes `OZ-COMP-001AW`; repo-wide parity remains estimated at
+  ~99.9%, and packaging/companion breadth moves to ~8.6%.
+- Verified QR configured remote URL fallback/validation with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_uses_configured_remote_url_as_local_fallback_when_url_omitted tests\test_cli.py::test_qr_rejects_invalid_configured_remote_url_before_bind_fallback -q`
+  (`2 failed` before implementation because remote URL config was ignored,
+  then `2 passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py
+  -q -k "qr_"` (`21 passed, 616 deselected`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `ce3f78cd`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

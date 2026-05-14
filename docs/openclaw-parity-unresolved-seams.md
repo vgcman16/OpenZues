@@ -13239,3 +13239,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   packaging/companion breadth moves to ~8.5%. Continue companion-app device
   flows, packaging/distribution, ACP lifecycle, provider action breadth, or
   setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now validates configured
+  `gateway.remote.url` before bind fallback and uses valid remote URLs as the
+  post-Tailscale non-remote setup-code fallback. Source/test checkpointed in
+  `ce3f78cd`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.6%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
