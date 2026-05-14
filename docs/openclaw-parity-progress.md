@@ -26132,6 +26132,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `mypy src\openzues\cli.py`, and focused `git diff --check`. Source/test
   checkpointed in `c2211ffb`.
 
+- Tlon native route registration is now exposed in the operator notification
+  route form and participates in native route default gateway send/poll
+  events, matching the upstream `@openclaw/tlon` channel manifest selection
+  label. This closes `OZ-PROV-001HN`; repo-wide parity remains estimated at
+  ~99.9%, and provider-native inbound/outbound breadth moves to
+  ~99.99999980%.
+- Verified Tlon native route operator UI parity with focused red/green
+  `python -m pytest tests\test_app.py::test_notification_route_operator_form_offers_tlon_native_routes -q`
+  (`1 failed` before implementation, then `1 passed`), adjacent operator
+  route proof `python -m pytest tests\test_app.py -q -k
+  "notification_route_operator_form_offers or
+  gateway_channels_endpoint_classifies_tlon_native_route"` (`12 passed, 207
+  deselected`), `node --check src\openzues\web\static\app.js`, `ruff check
+  src\openzues\web tests\test_app.py`, and focused `git diff --check`. Mypy
+  was not applicable because the touched web owner directory contains no
+  Python source modules. Source/test checkpointed in `5d035d5a`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

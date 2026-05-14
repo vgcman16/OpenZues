@@ -24,17 +24,17 @@ Hermes or Warp integration.
 | Active gateway/session/tool-contract path | ~99.970% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~99.987% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Browser/canvas/nodes/voice bounded command family | ~99.997% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Provider-native inbound/outbound breadth | ~99.99999979% | Near-complete bounded provider path; QQBot route-backed text/media sends, inline tags, structured self-closing media tags, reply sequencing, local media upload, chunked local media upload, voice-to-file fallback, file-media text follow-up delivery, direct image/video media text follow-up delivery, inline media text ordering/result metadata, Matrix route-backed implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, Google Chat add-on body-token webhook ingress, Mattermost native reaction actions, and safe direct outbound MEDIA/audio-as-voice/reply/reply-current stripping plus current-message resolution are checkpointed while broader provider inventory remains open | `docs/openclaw-parity-progress.md` |
+| Provider-native inbound/outbound breadth | ~99.99999980% | Near-complete bounded provider path; QQBot route-backed text/media sends, inline tags, structured self-closing media tags, reply sequencing, local media upload, chunked local media upload, voice-to-file fallback, file-media text follow-up delivery, direct image/video media text follow-up delivery, inline media text ordering/result metadata, Matrix route-backed implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, Google Chat add-on body-token webhook ingress, Mattermost native reaction actions, Tlon operator route registration, and safe direct outbound MEDIA/audio-as-voice/reply/reply-current stripping plus current-message resolution are checkpointed while broader provider inventory remains open | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.999999991% | Mostly landed; ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, top-level logs CLI tail/local-time formatting/truncation hint/follow polling/reset notice, startup optimization, package channel command metadata, package-prefixed update tags, packaging, and installed plugin depth are advancing | `docs/openclaw-parity-progress.md` |
 | CLI/operator control plane | ~99.99999% | Near-complete bounded native path | `docs/openclaw-parity-progress.md` |
 | Packaging/companion app breadth | ~11.4% | Minimal, active broad parity still open; local QR token/password SecretRef resolution plus SecretRef-template inference, Zalo/plugin-SDK profile-aware pairing approval commands, pending device-pair queue timestamp stability, changed approval-snapshot supersession, interactive supersession visibility, bootstrap profile bounding, bootstrap verify/bound-profile/profile lookup/redeem/revoke/restore/clear helpers, bootstrap public-key normalization, TTL pruning, and stripped-scope warnings, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, and Windows companion-node command defaults are now checkpointed; app-advertised dangerous command defaults from `OZ-COMP-001BY` through `OZ-COMP-001CE` are superseded and not counted | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
 
-Latest verified adjustment: `OZ-PKG-001DK` package-prefixed update tag
-normalization is source/test checkpointed in `c2211ffb`, moving
-runtime/CLI/doctor native-bridge parity to ~99.999999991%. Repo-wide
-OpenClaw parity remains estimated at ~99.9%.
+Latest verified adjustment: `OZ-PROV-001HN` Tlon operator route registration is
+source/test checkpointed in `5d035d5a`, moving provider-native inbound/outbound
+breadth to ~99.99999980%. Repo-wide OpenClaw parity remains estimated at
+~99.9%.
 
 ## Current Worktree Boundary
 
@@ -87,8 +87,10 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 
 Provider queue addendum: `OZ-PROV-001HL` Google Chat add-on body-token
 webhook ingress is checkpointed in `1f24c150`; `OZ-PROV-001HM` Mattermost
-native reaction actions are checkpointed in `1f2783fa`. The provider-native
-breadth percentage is now ~99.99999979%. Browser addendum: `OZ-CANVAS-001W`
+native reaction actions are checkpointed in `1f2783fa`; `OZ-PROV-001HN` Tlon
+operator route registration is checkpointed in `5d035d5a`. The
+provider-native breadth percentage is now ~99.99999980%. Browser addendum:
+`OZ-CANVAS-001W`
 `browser.act` click `doubleClick` normalization is checkpointed in `81f8ba7a`,
 and browser/canvas/nodes/voice bounded-command parity is now ~99.996%. Plugin
 addendum: `OZ-PLUGIN-00383` `test-helpers/import-side-effects` exact subpath
@@ -17960,6 +17962,27 @@ companion breadth.
     (`1 failed` before implementation because Windows was system-only, then `1
     passed`), adjacent policy proof (`3 passed`), ruff, mypy, and focused `git
     diff --check`.
+
+- [x] `OZ-PROV-001HN` Tlon operator route registration
+  - Source: `openclaw-main/extensions/tlon/package.json`,
+    `openclaw-main/extensions/tlon/src/channel.ts`,
+    `openclaw-main/extensions/tlon/src/core.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/web/templates/index.html`,
+    `src/openzues/web/static/app.js`, `tests/test_app.py`
+  - Contract: the operator notification route form exposes `tlon` with the
+    OpenClaw `Tlon (Urbit)` selection label and assigns native gateway
+    send/poll default events for Tlon routes.
+  - Evidence required: focused operator form proof, adjacent route form proof,
+    JS parse check, ruff, diff check
+  - Status: checkpointed in `5d035d5a`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_app.py::test_notification_route_operator_form_offers_tlon_native_routes -q`
+    (`1 failed` before implementation, then `1 passed`), adjacent route form
+    proof (`12 passed, 207 deselected`), `node --check`, ruff, and focused
+    `git diff --check`; mypy was not applicable because no Python web source
+    modules were touched.
 
 ## Canonical Checklist Format
 

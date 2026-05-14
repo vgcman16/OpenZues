@@ -13605,6 +13605,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime/CLI/doctor native-bridge parity moves to ~99.999999991%. Continue
   packaging/distribution, installed plugin activation depth, provider media
   edges, or companion breadth.
+- Current queue-head adjustment: Tlon native route registration is now visible
+  in the operator notification route form and receives the native gateway
+  send/poll default event set. Source/test checkpointed in `5d035d5a`;
+  repo-wide parity remains estimated at ~99.9%, and provider-native
+  inbound/outbound breadth moves to ~99.99999980%. Continue
+  packaging/distribution, installed plugin activation depth, provider media
+  edges, or companion breadth.
 - Current queue-head adjustment: direct provider-native outbound sends now
   lift `MEDIA:` directives out of visible message text and persist/deliver them
   as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;
