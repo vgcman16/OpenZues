@@ -15,7 +15,7 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999995% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999996% after the
   runtime bridge doctor posture, native ACP client interactive replay, ACP
   persisted task-record child-cap counting, ACP `streamTo="parent"`
   requester-context preflight, ACP `resumeSessionId` requester-context
@@ -31,7 +31,7 @@ Current percentage rollup:
   post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
   MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
-  preflight, devices list/approve CLI, top-level logs CLI tail/local-time formatting/truncation hint,
+  preflight, devices list/approve CLI, top-level logs CLI tail/local-time formatting/truncation hint/follow polling,
   package-update downgrade confirmation,
   stored-channel package update dispatch, package-update Node engine preflight,
   package-update activated plugin/channel-probe/version-mismatch restart-health failure,
@@ -13456,5 +13456,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   notices now include the upstream `--max-bytes` recovery hint. Source/test
   checkpointed in `d9a631f6`; repo-wide parity remains estimated at ~99.9%,
   and runtime/CLI/doctor native-bridge parity moves to ~99.99999995%. Continue
+  remaining packaging/distribution breadth, ACP lifecycle depth, installed
+  plugin activation, provider media edges, or companion app flows.
+- Current queue-head adjustment: native `openzues logs --follow --interval`
+  now polls the gateway log tail with cursor resume semantics and prints the
+  file header only once. Source/test checkpointed in `f153e85d`; repo-wide
+  parity remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge
+  parity moves to ~99.99999996%. Continue
   remaining packaging/distribution breadth, ACP lifecycle depth, installed
   plugin activation, provider media edges, or companion app flows.
