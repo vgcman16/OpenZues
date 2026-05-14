@@ -1678,7 +1678,7 @@ def _emit_logs_tail(
         return
     typer.echo(f"Log file: {payload.get('file') or ''}")
     if payload.get("truncated"):
-        typer.echo("Log tail truncated.", err=True)
+        typer.echo("Log tail truncated (increase --max-bytes).", err=True)
     if payload.get("reset"):
         typer.echo("Log cursor reset.", err=True)
     lines = payload.get("lines")

@@ -8140,6 +8140,23 @@ def test_logs_plain_local_time_formats_structured_log_lines(
     assert not timestamp.group(0).endswith("Z")
 
 
+def test_logs_plain_truncation_notice_includes_max_bytes_hint(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / "openzues-2026-05-14.log"
+    log_path.write_text("first line\nsecond line\n", encoding="utf-8")
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+
+    result = runner.invoke(app, ["logs", "--max-bytes", "1", "--plain"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Log tail truncated (increase --max-bytes)." in result.stderr
+
+
 def test_sandbox_list_json_returns_openclaw_shaped_inventory(monkeypatch) -> None:
     class FakeDatabase:
         async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
