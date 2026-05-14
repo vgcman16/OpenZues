@@ -160,7 +160,7 @@ Current percentage rollup:
   infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.969% after the
   latest native web-push gateway method slice.
-- The provider-native inbound/outbound breadth family is estimated at ~99.9999993%
+- The provider-native inbound/outbound breadth family is estimated at ~99.9999994%
   after route-backed Telegram stale-thread retry fallback for JSON and
   HTTP-error paths, Feishu media implicit reply fanout, Matrix implicit reply
   fanout, IRC media attachment formatting, Discord multi-media implicit reply
@@ -172,7 +172,8 @@ Current percentage rollup:
   file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file
   fallback, QQBot file-media text follow-up delivery, QQBot direct image/video
   media text follow-up delivery, QQBot inline media text ordering/result
-  metadata, direct outbound `MEDIA:` directive lifting, LINE signed webhook
+  metadata, direct outbound `MEDIA:` / `[[audio_as_voice]]` directive lifting,
+  LINE signed webhook
   ingress, and
   LINE text webhook session delivery plus
   postback/media-placeholder/sticker/location delivery and group
@@ -13487,3 +13488,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   inbound/outbound breadth moves to ~99.9999993%. Continue provider media/reply
   edges, packaging/distribution, installed plugin activation, or companion
   breadth.
+- Current queue-head adjustment: direct provider-native outbound sends now
+  strip `[[audio_as_voice]]` from visible caption text and project it into
+  `audioAsVoice` / runtime `audio_as_voice` metadata. Source/test checkpointed
+  in `b8af69d1`; repo-wide parity remains estimated at ~99.9%, and
+  provider-native inbound/outbound breadth moves to ~99.9999994%. Continue
+  provider media/reply edges, packaging/distribution, installed plugin
+  activation, or companion breadth.
