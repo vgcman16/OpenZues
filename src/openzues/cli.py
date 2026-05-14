@@ -99789,6 +99789,14 @@ def _is_qr_private_lan_host(host: str) -> bool:
     )
 
 
+def _is_qr_tailnet_host(host: str) -> bool:
+    try:
+        address = ipaddress.ip_address(str(host or "").strip().strip("[]"))
+    except ValueError:
+        return False
+    return address.version == 4 and address in ipaddress.ip_network("100.64.0.0/10")
+
+
 def _resolve_qr_lan_bind_host() -> str | None:
     try:
         host_name = socket.gethostname()
@@ -99807,6 +99815,28 @@ def _resolve_qr_lan_bind_host() -> str | None:
             continue
         seen.add(address)
         if _is_qr_private_lan_host(address):
+            return address
+    return None
+
+
+def _resolve_qr_tailnet_bind_host() -> str | None:
+    try:
+        host_name = socket.gethostname()
+        candidates = socket.getaddrinfo(
+            host_name,
+            None,
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM,
+        )
+    except OSError:
+        return None
+    seen: set[str] = set()
+    for candidate in candidates:
+        address = str(candidate[4][0])
+        if address in seen:
+            continue
+        seen.add(address)
+        if _is_qr_tailnet_host(address):
             return address
     return None
 
@@ -99836,6 +99866,14 @@ def _resolve_qr_gateway_bind_url(
         return (
             _normalize_pairing_setup_url(f"ws://{_format_pairing_host(host)}:{port}"),
             "gateway.bind=lan",
+        )
+    if bind_mode == "tailnet":
+        host = _resolve_qr_tailnet_bind_host()
+        if host is None:
+            raise ValueError("gateway.bind=tailnet set, but no tailnet IP was found.")
+        return (
+            _normalize_pairing_setup_url(f"ws://{_format_pairing_host(host)}:{port}"),
+            "gateway.bind=tailnet",
         )
     return None
 

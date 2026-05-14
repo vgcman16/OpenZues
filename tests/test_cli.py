@@ -434,6 +434,98 @@ def test_qr_lan_bind_reports_missing_private_lan_ip_before_token_issue(
     assert not (data_dir / "devices" / "bootstrap.json").exists()
 
 
+def test_qr_rejects_tailnet_bind_cleartext_url_before_token_issue(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setattr(
+        "openzues.cli._resolve_qr_tailnet_bind_host",
+        lambda: "100.64.0.9",
+        raising=False,
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "bind": "tailnet",
+                    "port": 18789,
+                    "auth": {"mode": "token", "token": "local-token"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--setup-code-only"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "prefer gateway.tailscale.mode=serve" in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
+def test_qr_tailnet_bind_reports_missing_tailnet_ip_before_token_issue(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setattr(
+        "openzues.cli._resolve_qr_tailnet_bind_host",
+        lambda: None,
+        raising=False,
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "bind": "tailnet",
+                    "port": 18789,
+                    "auth": {"mode": "token", "token": "local-token"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--setup-code-only"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "gateway.bind=tailnet set, but no tailnet IP was found." in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
 def test_qr_uses_device_pair_public_url_from_config_when_url_omitted(
     tmp_path,
     monkeypatch,
