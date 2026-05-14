@@ -99778,6 +99778,11 @@ def _qr_gateway_port(
     return app_settings.port
 
 
+def _qr_gateway_scheme(config_snapshot: Mapping[str, object] | None) -> str:
+    tls_config = _qr_config_mapping(_qr_gateway_config(config_snapshot).get("tls"))
+    return "wss" if tls_config.get("enabled") is True else "ws"
+
+
 def _is_qr_private_lan_host(host: str) -> bool:
     try:
         address = ipaddress.ip_address(str(host or "").strip().strip("[]"))
@@ -99851,6 +99856,7 @@ def _resolve_qr_gateway_bind_url(
     gateway_config = _qr_gateway_config(config_snapshot)
     bind_mode = str(gateway_config.get("bind") or "loopback").strip().lower()
     port = _qr_gateway_port(app_settings=app_settings, config_snapshot=config_snapshot)
+    scheme = _qr_gateway_scheme(config_snapshot)
     if bind_mode == "custom":
         host = _qr_config_text(gateway_config.get("customBindHost"))
         if host is None:
@@ -99858,7 +99864,7 @@ def _resolve_qr_gateway_bind_url(
         if _is_pairing_loopback_host(host):
             raise ValueError(_qr_loopback_bind_error())
         return (
-            _normalize_pairing_setup_url(f"ws://{_format_pairing_host(host)}:{port}"),
+            _normalize_pairing_setup_url(f"{scheme}://{_format_pairing_host(host)}:{port}"),
             "gateway.bind=custom",
         )
     if bind_mode == "lan":
@@ -99866,7 +99872,7 @@ def _resolve_qr_gateway_bind_url(
         if host is None:
             raise ValueError("gateway.bind=lan set, but no private LAN IP was found.")
         return (
-            _normalize_pairing_setup_url(f"ws://{_format_pairing_host(host)}:{port}"),
+            _normalize_pairing_setup_url(f"{scheme}://{_format_pairing_host(host)}:{port}"),
             "gateway.bind=lan",
         )
     if bind_mode == "tailnet":
@@ -99874,7 +99880,7 @@ def _resolve_qr_gateway_bind_url(
         if host is None:
             raise ValueError("gateway.bind=tailnet set, but no tailnet IP was found.")
         return (
-            _normalize_pairing_setup_url(f"ws://{_format_pairing_host(host)}:{port}"),
+            _normalize_pairing_setup_url(f"{scheme}://{_format_pairing_host(host)}:{port}"),
             "gateway.bind=tailnet",
         )
     return None
@@ -100529,7 +100535,7 @@ def _resolve_qr_gateway_url(
         return bind_url
     if _is_pairing_loopback_host(app_settings.host):
         raise ValueError(_qr_loopback_bind_error())
-    scheme = "wss" if remote else "ws"
+    scheme = "wss" if remote else _qr_gateway_scheme(config_snapshot)
     return (
         _normalize_pairing_setup_url(
             f"{scheme}://{app_settings.host}:{app_settings.port}"
