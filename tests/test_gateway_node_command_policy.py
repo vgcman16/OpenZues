@@ -134,3 +134,23 @@ def test_explicit_allow_commands_can_enable_screen_record() -> None:
     assert "screen.record" in allowlist
     assert "camera.snap" in allowlist
     assert "chat.push" in allowlist
+
+
+def test_plugin_dangerous_node_commands_filter_defaults_until_explicitly_allowed() -> None:
+    allowlist = resolve_node_command_allowlist(
+        platform="Windows_NT",
+        device_family="Windows",
+        dangerous_plugin_commands=("browser.proxy",),
+    )
+
+    assert "system.run" in allowlist
+    assert "browser.proxy" not in allowlist
+
+    explicit_allowlist = resolve_node_command_allowlist(
+        platform="Windows_NT",
+        device_family="Windows",
+        allow_commands=("browser.proxy",),
+        dangerous_plugin_commands=("browser.proxy",),
+    )
+
+    assert "browser.proxy" in explicit_allowlist

@@ -1851,6 +1851,7 @@ class GatewayNodeMethodService:
         memory_doctor_workspace: Path | None = None,
         node_allow_commands: Iterable[str] = (),
         node_deny_commands: Iterable[str] = (),
+        node_dangerous_plugin_commands: Iterable[str] = (),
         browser_runtime_service: GatewayBrowserRuntimeService | None = None,
         browser_proxy_media_dir: Path | None = None,
         acp_spawn_service: GatewayAcpSpawnService | None = None,
@@ -2009,6 +2010,7 @@ class GatewayNodeMethodService:
         self._memory_doctor_workspace = memory_doctor_workspace or Path.cwd()
         self._node_allow_commands = tuple(node_allow_commands)
         self._node_deny_commands = tuple(node_deny_commands)
+        self._node_dangerous_plugin_commands = tuple(node_dangerous_plugin_commands)
         self._browser_runtime_service = browser_runtime_service or GatewayBrowserRuntimeService()
         self._browser_proxy_media_dir = browser_proxy_media_dir or (
             Path(tempfile.gettempdir()) / "openzues-browser-proxy-media"
@@ -2037,6 +2039,7 @@ class GatewayNodeMethodService:
             device_family=device_family,
             allow_commands=self._node_allow_commands,
             deny_commands=self._node_deny_commands,
+            dangerous_plugin_commands=self._node_dangerous_plugin_commands,
         )
         return list(normalize_declared_node_commands(commands, allowlist=allowlist))
 
@@ -2328,6 +2331,7 @@ class GatewayNodeMethodService:
             device_family=node.device_family or paired_node.device_family,
             allow_commands=self._node_allow_commands,
             deny_commands=self._node_deny_commands,
+            dangerous_plugin_commands=self._node_dangerous_plugin_commands,
         )
         live_commands = list(
             normalize_declared_node_commands(
@@ -3348,6 +3352,7 @@ class GatewayNodeMethodService:
             device_family=node.device_family,
             allow_commands=self._node_allow_commands,
             deny_commands=self._node_deny_commands,
+            dangerous_plugin_commands=self._node_dangerous_plugin_commands,
         )
         declared_commands = normalize_declared_node_commands(
             node.commands,
@@ -12046,6 +12051,7 @@ class GatewayNodeMethodService:
                 ),
                 allow_commands=self._node_allow_commands,
                 deny_commands=self._node_deny_commands,
+                dangerous_plugin_commands=self._node_dangerous_plugin_commands,
             )
             live_declared_commands = normalize_declared_node_commands(
                 target_node.commands,

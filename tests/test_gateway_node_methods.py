@@ -126386,3 +126386,36 @@ async def test_node_invoke_uses_configured_allow_commands_for_plugin_node_host_c
     assert response["ok"] is True
     assert response["command"] == "browser.inspect"
     assert connection.sent_events[0]["event"] == "node.invoke.request"
+
+
+@pytest.mark.asyncio
+async def test_node_invoke_filters_dangerous_plugin_node_command_defaults() -> None:
+    registry = GatewayNodeRegistry()
+    connection = AutoReplyNodeConnection(registry, "conn-dangerous-plugin-node")
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-dangerous-plugin-node",
+            device_id="dangerous-plugin-node",
+            platform="windows",
+            commands=("browser.proxy",),
+        ),
+    )
+    service = GatewayNodeMethodService(
+        registry,
+        node_dangerous_plugin_commands=("browser.proxy",),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        await service.call(
+            "node.invoke",
+            {
+                "nodeId": "dangerous-plugin-node",
+                "command": "browser.proxy",
+                "params": {},
+                "idempotencyKey": "idem-dangerous-plugin-browser-proxy",
+            },
+        )
+
+    assert "node command not allowed" in str(exc_info.value)
+    assert connection.sent_events == []
