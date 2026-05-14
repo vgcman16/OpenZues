@@ -26965,6 +26965,129 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_mattermost_nati
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_mattermost_react_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-mattermost-react"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Mattermost Native Provider",
+        kind="mattermost",
+        target="https://mattermost.example.com",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="mattermost-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "mattermost",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "channel:dthcxgoxhifn3pwh65cut3ud3w",
+        },
+    )
+    calls: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        calls.append((method, target, payload, secret_header_name, secret_token))
+        if target == "https://mattermost.example.com/api/v4/users/me":
+            return {"id": "bot-user"}
+        if target == "https://mattermost.example.com/api/v4/reactions":
+            return {"status": "ok"}
+        if (
+            target
+            == "https://mattermost.example.com/api/v4/users/bot-user/posts/post-123/reactions/thumbsup"
+        ):
+            return {"status": 200}
+        raise AssertionError(f"unexpected Mattermost target: {target}")
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    added = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="mattermost",
+            action="react",
+            params={"messageId": "post-123", "emoji": ":thumbsup:"},
+            account_id="default",
+            idempotency_key="idem-mattermost-react-add",
+        )
+    )
+    removed = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="mattermost",
+            action="react",
+            params={"postId": "post-123", "emoji": "thumbsup", "remove": True},
+            account_id="default",
+            idempotency_key="idem-mattermost-react-remove",
+        )
+    )
+
+    assert added == {"ok": True, "added": "thumbsup"}
+    assert removed == {"ok": True, "removed": "thumbsup"}
+    assert calls == [
+        (
+            "GET",
+            "https://mattermost.example.com/api/v4/users/me",
+            None,
+            "Authorization",
+            "Bearer mattermost-bot-token",
+        ),
+        (
+            "POST",
+            "https://mattermost.example.com/api/v4/reactions",
+            {
+                "user_id": "bot-user",
+                "post_id": "post-123",
+                "emoji_name": "thumbsup",
+            },
+            "Authorization",
+            "Bearer mattermost-bot-token",
+        ),
+        (
+            "GET",
+            "https://mattermost.example.com/api/v4/users/me",
+            None,
+            "Authorization",
+            "Bearer mattermost-bot-token",
+        ),
+        (
+            "DELETE",
+            "https://mattermost.example.com/api/v4/users/bot-user/posts/post-123/reactions/thumbsup",
+            None,
+            "Authorization",
+            "Bearer mattermost-bot-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_msteams_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -6437,6 +6437,15 @@ def _mattermost_result_channel_id(result: object) -> str | None:
     return str(candidate).strip() or None
 
 
+def _mattermost_reaction_emoji_name(raw: object) -> str:
+    if not isinstance(raw, str):
+        raise RuntimeError("Mattermost react requires emoji.")
+    emoji = raw.strip().strip(":")
+    if not emoji:
+        raise RuntimeError("Mattermost react requires emoji.")
+    return emoji
+
+
 def _msteams_route_config(raw_target: str | None) -> _MSTeamsRouteConfig:
     target = str(raw_target or "").strip()
     if _normalized_http_webhook_url(target) is None:
@@ -24996,6 +25005,22 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
+        if channel == "mattermost" and action == "react":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Mattermost route is configured for message.action react."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_mattermost_react_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "signal" and action == "react":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -37460,6 +37485,66 @@ class OpsMeshService:
         if media_urls:
             native_result["mediaUrls"] = media_urls
         return native_result
+
+    def _mattermost_bot_user_id(
+        self,
+        route: dict[str, Any],
+        secret_token: str | None,
+    ) -> str:
+        result = self._request_json_provider_url(
+            _mattermost_api_endpoint(str(route.get("target") or ""), "users/me"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_mattermost_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Mattermost users/me API returned a non-JSON response.")
+        user_id = str(result.get("id") or "").strip()
+        if not user_id:
+            raise RuntimeError("Mattermost reactions failed: could not resolve bot user id.")
+        return user_id
+
+    def _dispatch_mattermost_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        post_id = _message_action_param_string(request.params, "messageId")
+        if post_id is None:
+            post_id = _message_action_param_string(request.params, "postId")
+        if post_id is None:
+            raise RuntimeError("Mattermost react requires messageId (post id).")
+        emoji_name = _mattermost_reaction_emoji_name(request.params.get("emoji"))
+        user_id = self._mattermost_bot_user_id(route, secret_token)
+        remove = request.params.get("remove") is True
+        if remove:
+            self._request_json_provider_url(
+                _mattermost_api_endpoint(
+                    str(route.get("target") or ""),
+                    (
+                        f"users/{quote(user_id, safe='')}/posts/"
+                        f"{quote(post_id, safe='')}/reactions/"
+                        f"{quote(emoji_name, safe='')}"
+                    ),
+                ),
+                method="DELETE",
+                secret_header_name="Authorization",
+                secret_token=_mattermost_bearer_token(secret_token),
+            )
+            return {"ok": True, "removed": emoji_name}
+        self._request_json_provider_url(
+            _mattermost_api_endpoint(str(route.get("target") or ""), "reactions"),
+            method="POST",
+            payload={
+                "user_id": user_id,
+                "post_id": post_id,
+                "emoji_name": emoji_name,
+            },
+            secret_header_name="Authorization",
+            secret_token=_mattermost_bearer_token(secret_token),
+        )
+        return {"ok": True, "added": emoji_name}
 
     def _msteams_request_user_token_service(
         self,
