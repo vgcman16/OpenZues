@@ -65,6 +65,30 @@ def test_ios_allowlist_includes_openclaw_chat_and_talk_defaults() -> None:
     ) == declared
 
 
+def test_ios_allowlist_includes_openclaw_capability_command_defaults() -> None:
+    allowlist = resolve_node_command_allowlist(
+        platform="iOS 18",
+        device_family="iPhone",
+    )
+
+    declared = (
+        "camera.snap",
+        "camera.clip",
+        "watch.status",
+        "watch.notify",
+        "contacts.add",
+        "calendar.add",
+        "reminders.add",
+    )
+
+    for command in declared:
+        assert command in allowlist
+    assert normalize_declared_node_commands(
+        declared,
+        allowlist=allowlist,
+    ) == declared
+
+
 def test_explicit_allow_commands_can_enable_screen_record() -> None:
     allowlist = resolve_node_command_allowlist(
         platform="ios",
