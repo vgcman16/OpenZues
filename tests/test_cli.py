@@ -215,6 +215,28 @@ def test_qr_setup_code_only_rejects_invalid_override_url_before_token_issue(
     assert not (data_dir / "devices" / "bootstrap.json").exists()
 
 
+def test_qr_setup_code_only_rejects_scheme_like_path_public_url_before_token_issue(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--setup-code-only",
+            "--public-url",
+            "http:/localhost:notaport",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "Configured publicUrl is invalid." in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
 def test_qr_setup_code_only_rejects_public_cleartext_url_before_token_issue(
     tmp_path, monkeypatch
 ) -> None:
@@ -255,6 +277,491 @@ def test_qr_setup_code_only_allows_private_lan_cleartext_url(
     assert result.exit_code == 0, result.stdout
     payload = _decode_base64url_json(result.stdout.strip())
     assert payload["url"] == "ws://192.168.1.8:18789"
+
+
+def test_qr_uses_custom_bind_host_from_config_when_url_omitted(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "bind": "custom",
+                    "customBindHost": "192.168.1.8",
+                    "port": 18789,
+                    "auth": {"mode": "token", "token": "local-token"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--setup-code-only"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = _decode_base64url_json(result.stdout.strip())
+    assert payload["url"] == "ws://192.168.1.8:18789"
+
+
+def test_qr_allows_explicit_custom_loopback_bind_host(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "bind": "custom",
+                    "customBindHost": "127.0.0.1",
+                    "port": 19001,
+                    "auth": {"mode": "token", "token": "local-token"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "ws://127.0.0.1:19001"
+    assert payload["urlSource"] == "gateway.bind=custom"
+    setup_payload = _decode_base64url_json(payload["setupCode"])
+    assert setup_payload["url"] == "ws://127.0.0.1:19001"
+
+
+def test_qr_uses_tls_scheme_for_custom_bind_host_when_enabled(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "bind": "custom",
+                    "customBindHost": "192.168.1.8",
+                    "port": 18789,
+                    "tls": {"enabled": True},
+                    "auth": {"mode": "token", "token": "local-token"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://192.168.1.8:18789"
+    assert payload["urlSource"] == "gateway.bind=custom"
+
+
+def test_qr_rejects_public_custom_bind_host_before_token_issue(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "bind": "custom",
+                    "customBindHost": "gateway.example",
+                    "port": 18789,
+                    "auth": {"mode": "token", "token": "local-token"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--setup-code-only"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "Tailscale and public mobile pairing require a secure gateway URL" in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
+def test_qr_uses_lan_bind_host_from_network_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setattr(
+        "openzues.cli._resolve_qr_lan_bind_host",
+        lambda: "192.168.1.20",
+        raising=False,
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "bind": "lan",
+                    "port": 18789,
+                    "auth": {"mode": "token", "token": "local-token"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "ws://192.168.1.20:18789"
+    assert payload["urlSource"] == "gateway.bind=lan"
+    setup_payload = _decode_base64url_json(payload["setupCode"])
+    assert setup_payload["url"] == "ws://192.168.1.20:18789"
+
+
+def test_qr_lan_bind_reports_missing_private_lan_ip_before_token_issue(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setattr(
+        "openzues.cli._resolve_qr_lan_bind_host",
+        lambda: None,
+        raising=False,
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "bind": "lan",
+                    "port": 18789,
+                    "auth": {"mode": "token", "token": "local-token"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--setup-code-only"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "gateway.bind=lan set, but no private LAN IP was found." in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
+def test_qr_rejects_tailnet_bind_cleartext_url_before_token_issue(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setattr(
+        "openzues.cli._resolve_qr_tailnet_bind_host",
+        lambda: "100.64.0.9",
+        raising=False,
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "bind": "tailnet",
+                    "port": 18789,
+                    "auth": {"mode": "token", "token": "local-token"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--setup-code-only"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "prefer gateway.tailscale.mode=serve" in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
+def test_qr_tailnet_bind_reports_missing_tailnet_ip_before_token_issue(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setattr(
+        "openzues.cli._resolve_qr_tailnet_bind_host",
+        lambda: None,
+        raising=False,
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "bind": "tailnet",
+                    "port": 18789,
+                    "auth": {"mode": "token", "token": "local-token"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--setup-code-only"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "gateway.bind=tailnet set, but no tailnet IP was found." in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
+def test_qr_uses_device_pair_public_url_from_config_when_url_omitted(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.13-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.13-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {"auth": {"mode": "token", "token": "local-token"}},
+                "plugins": {
+                    "entries": {
+                        "device-pair": {
+                            "config": {
+                                "publicUrl": "wss://device-pair.example.test:443",
+                            },
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "local-token" not in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://device-pair.example.test:443"
+    assert payload["urlSource"] == "plugins.entries.device-pair.config.publicUrl"
+    setup_payload = _decode_base64url_json(payload["setupCode"])
+    assert setup_payload["url"] == "wss://device-pair.example.test:443"
+
+
+def test_qr_uses_configured_remote_url_as_local_fallback_when_url_omitted(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {"mode": "token", "token": "local-token"},
+                    "remote": {"url": "remote.example.com:444"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://remote.example.com:444"
+    assert payload["urlSource"] == "gateway.remote.url"
+
+
+def test_qr_rejects_invalid_configured_remote_url_before_bind_fallback(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {"mode": "token", "token": "local-token"},
+                    "remote": {"url": "http://localhost:notaport"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--setup-code-only"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "Configured gateway.remote.url is invalid." in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
 
 
 def test_qr_local_json_resolves_gateway_password_secretref(
@@ -313,6 +820,65 @@ def test_qr_local_json_resolves_gateway_password_secretref(
     payload = json.loads(result.stdout)
     assert payload["gatewayUrl"] == "wss://gateway.example.test:18789"
     assert payload["auth"] == "password"
+    assert payload["urlSource"] == "cli.url"
+
+
+def test_qr_local_json_resolves_gateway_token_secretref(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("QR_LOCAL_GATEWAY_TOKEN", "local-token-secret")
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+    monkeypatch.delenv("OPENCLAW_GATEWAY_PASSWORD", raising=False)
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {
+                        "mode": "token",
+                        "token": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "QR_LOCAL_GATEWAY_TOKEN",
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--json",
+            "--url",
+            "wss://gateway.example.test:18789",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "local-token-secret" not in result.stdout
+    assert "local-token-secret" not in result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "wss://gateway.example.test:18789"
+    assert payload["auth"] == "token"
     assert payload["urlSource"] == "cli.url"
 
 
@@ -376,11 +942,225 @@ def test_qr_rejects_inferred_token_password_secretrefs_before_token_issue(
     assert not (data_dir / "devices" / "bootstrap.json").exists()
 
 
+def test_qr_inferred_mode_ignores_unresolved_token_template_when_password_env_set(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+    monkeypatch.setenv("OPENCLAW_GATEWAY_PASSWORD", "password-from-env")
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "bind": "custom",
+                    "customBindHost": "127.0.0.1",
+                    "port": 18789,
+                    "auth": {
+                        "token": "${MISSING_GW_TOKEN}",
+                    },
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "password-from-env" not in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["auth"] == "password"
+    assert payload["gatewayUrl"] == "ws://127.0.0.1:18789"
+
+
+def test_qr_password_auth_mode_requires_password_before_token_issue(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "env-token-1234567890")
+    monkeypatch.delenv("OPENCLAW_GATEWAY_PASSWORD", raising=False)
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {"mode": "password"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--setup-code-only",
+            "--url",
+            "wss://gateway.example.test:18789",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert (
+        "Gateway auth is set to password, but no password is configured."
+        in result.stderr
+    )
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
+def test_qr_token_auth_mode_requires_token_before_token_issue(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+    monkeypatch.setenv("OPENCLAW_GATEWAY_PASSWORD", "env-password-1234567890")
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {"mode": "token"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--setup-code-only",
+            "--url",
+            "wss://gateway.example.test:18789",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "Gateway auth is set to token, but no token is configured." in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
+def test_qr_auth_error_precedes_loopback_url_resolution_before_token_issue(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+    monkeypatch.delenv("OPENCLAW_GATEWAY_PASSWORD", raising=False)
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {"mode": "token"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--setup-code-only"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "Gateway auth is set to token, but no token is configured." in result.stderr
+    assert "Gateway is only bound to loopback" not in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
 def test_qr_remote_requires_explicit_remote_url_before_token_issue(
     tmp_path, monkeypatch
 ) -> None:
     data_dir = tmp_path / "data"
     monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "auth": {"mode": "token", "token": "local-token"},
+                },
+            }
+        )
+    )
 
     result = runner.invoke(app, ["qr", "--setup-code-only", "--remote"])
 
@@ -1214,6 +1994,51 @@ def test_devices_approve_latest_human_renders_selected_approval_context(
     assert "openzues devices approve req-abc" in result.stderr
 
 
+def test_devices_approve_latest_human_sanitizes_preview_ip_output(
+    monkeypatch,
+) -> None:
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            assert method == "device.pair.list"
+            assert params == {}
+            return {
+                "pending": [
+                    {
+                        "requestId": "req-abc",
+                        "deviceId": "device-9",
+                        "displayName": "Device Nine",
+                        "role": "operator",
+                        "scopes": ["operator.admin"],
+                        "remoteIp": "10.0.0.9\rspoof",
+                        "ts": 1000,
+                    },
+                ],
+                "paired": [
+                    {
+                        "deviceId": "device-9",
+                        "displayName": "Device Nine",
+                        "roles": ["operator"],
+                        "scopes": ["operator.read"],
+                    },
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "approve"])
+
+    assert result.exit_code == 1
+    assert "\r" not in result.stdout
+    assert "IP:     10.0.0.9spoof" in result.stdout
+
+
 def test_devices_approve_latest_json_preserves_gateway_flags_without_secrets(
     monkeypatch,
 ) -> None:
@@ -1290,6 +2115,85 @@ def test_devices_approve_latest_json_preserves_gateway_flags_without_secrets(
         "--timeout 3000 --json"
     )
     assert payload["requiresAuthFlags"] == {"token": True, "password": False}
+    assert "secret-token" not in result.stdout
+
+
+def test_devices_approve_latest_human_preserves_gateway_flags_without_secrets(
+    monkeypatch,
+) -> None:
+    remote_calls: list[tuple[str, dict[str, object], dict[str, object]]] = []
+
+    async def fake_remote_gateway_call(
+        method: str,
+        params: dict[str, object],
+        *,
+        url: str,
+        token: str | None,
+        password: str | None,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        remote_calls.append(
+            (
+                method,
+                dict(params),
+                {
+                    "url": url,
+                    "token": token,
+                    "password": password,
+                    "timeoutMs": timeout_ms,
+                },
+            )
+        )
+        assert method == "device.pair.list"
+        return {
+            "pending": [{"requestId": "req-url", "deviceId": "device-9", "ts": 1000}],
+            "paired": [],
+        }
+
+    async def fail_local_services(action):
+        raise AssertionError("explicit --url should use remote gateway dispatch")
+
+    monkeypatch.setattr(
+        "openzues.cli._call_remote_gateway_node_method",
+        fake_remote_gateway_call,
+    )
+    monkeypatch.setattr("openzues.cli._run_with_services", fail_local_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "devices",
+            "approve",
+            "--latest",
+            "--url",
+            "ws://gateway.example:18789/openclaw?cluster=qa lab",
+            "--timeout",
+            "3000",
+            "--token",
+            "secret-token",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert remote_calls == [
+        (
+            "device.pair.list",
+            {},
+            {
+                "url": "ws://gateway.example:18789/openclaw?cluster=qa lab",
+                "token": "secret-token",
+                "password": None,
+                "timeoutMs": 3000,
+            },
+        )
+    ]
+    assert (
+        "openzues devices approve req-url --url "
+        "'ws://gateway.example:18789/openclaw?cluster=qa lab' --timeout 3000"
+        in result.stderr
+    )
+    assert "Reuse the same --token option when rerunning." in result.stderr
+    assert "secret-token" not in result.stderr
     assert "secret-token" not in result.stdout
 
 
@@ -1904,6 +2808,27 @@ def test_devices_mutation_commands_call_openclaw_gateway_methods(
     assert result.exit_code == 0, result.stdout
     assert calls == [expected_call]
     assert json.loads(result.stdout) == response
+
+
+def test_devices_rotate_rejects_blank_device_or_role_before_dispatch(monkeypatch) -> None:
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            raise AssertionError(f"unexpected gateway dispatch: {method} {params}")
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["devices", "rotate", "--device", " ", "--role", "main"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "--device and --role required" in result.stderr
 
 
 def test_devices_clear_json_removes_paired_and_rejects_pending(monkeypatch) -> None:

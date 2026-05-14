@@ -39868,7 +39868,9 @@ async function readChannelAllowFromStore(channel, env = process.env, accountId) 
 }
 
 function buildPairingReply(params) {
-  const approveCommand = `openclaw pairing approve ${params.channel} ${params.code}`;
+  const approveCommand = formatOpenClawCliCommand(
+    `openclaw pairing approve ${params.channel} ${params.code}`,
+  );
   return [
     "OpenClaw: access not configured.",
     "",
@@ -99648,6 +99650,8 @@ def _normalize_pairing_setup_url(raw: str) -> str:
     value = str(raw or "").strip()
     if not value:
         raise ValueError("Gateway URL unavailable.")
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:/", value) and "://" not in value:
+        raise ValueError("Configured publicUrl is invalid.")
     candidate = value if "://" in value else f"wss://{value}"
     parsed = urlparse(candidate)
     if parsed.username or parsed.password:
@@ -99738,10 +99742,148 @@ def _qr_gateway_remote_config(
     return _qr_config_mapping(_qr_gateway_config(config_snapshot).get("remote"))
 
 
+def _qr_device_pair_public_url(
+    config_snapshot: Mapping[str, object] | None,
+) -> str | None:
+    if config_snapshot is None:
+        return None
+    plugins = _qr_config_mapping(config_snapshot.get("plugins"))
+    entries = _qr_config_mapping(plugins.get("entries"))
+    device_pair = _qr_config_mapping(entries.get("device-pair"))
+    config = _qr_config_mapping(device_pair.get("config"))
+    return _qr_config_text(config.get("publicUrl"))
+
+
 def _qr_gateway_tailscale_config(
     config_snapshot: Mapping[str, object] | None,
 ) -> Mapping[str, object]:
     return _qr_config_mapping(_qr_gateway_config(config_snapshot).get("tailscale"))
+
+
+def _qr_gateway_port(
+    *,
+    app_settings: Settings,
+    config_snapshot: Mapping[str, object] | None,
+) -> int:
+    env_port = _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_PORT"))
+    if env_port is not None:
+        try:
+            parsed_env_port = int(env_port)
+        except ValueError:
+            parsed_env_port = 0
+        if parsed_env_port > 0:
+            return parsed_env_port
+    config_port = _qr_gateway_config(config_snapshot).get("port")
+    if isinstance(config_port, int) and not isinstance(config_port, bool):
+        if config_port > 0:
+            return config_port
+    return app_settings.port
+
+
+def _qr_gateway_scheme(config_snapshot: Mapping[str, object] | None) -> str:
+    tls_config = _qr_config_mapping(_qr_gateway_config(config_snapshot).get("tls"))
+    return "wss" if tls_config.get("enabled") is True else "ws"
+
+
+def _is_qr_private_lan_host(host: str) -> bool:
+    try:
+        address = ipaddress.ip_address(str(host or "").strip().strip("[]"))
+    except ValueError:
+        return False
+    return (
+        address.version == 4
+        and address.is_private
+        and not address.is_loopback
+        and not address.is_link_local
+    )
+
+
+def _is_qr_tailnet_host(host: str) -> bool:
+    try:
+        address = ipaddress.ip_address(str(host or "").strip().strip("[]"))
+    except ValueError:
+        return False
+    return address.version == 4 and address in ipaddress.ip_network("100.64.0.0/10")
+
+
+def _resolve_qr_lan_bind_host() -> str | None:
+    try:
+        host_name = socket.gethostname()
+        candidates = socket.getaddrinfo(
+            host_name,
+            None,
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM,
+        )
+    except OSError:
+        return None
+    seen: set[str] = set()
+    for candidate in candidates:
+        address = str(candidate[4][0])
+        if address in seen:
+            continue
+        seen.add(address)
+        if _is_qr_private_lan_host(address):
+            return address
+    return None
+
+
+def _resolve_qr_tailnet_bind_host() -> str | None:
+    try:
+        host_name = socket.gethostname()
+        candidates = socket.getaddrinfo(
+            host_name,
+            None,
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM,
+        )
+    except OSError:
+        return None
+    seen: set[str] = set()
+    for candidate in candidates:
+        address = str(candidate[4][0])
+        if address in seen:
+            continue
+        seen.add(address)
+        if _is_qr_tailnet_host(address):
+            return address
+    return None
+
+
+def _resolve_qr_gateway_bind_url(
+    *,
+    app_settings: Settings,
+    config_snapshot: Mapping[str, object] | None,
+) -> tuple[str, str] | None:
+    gateway_config = _qr_gateway_config(config_snapshot)
+    bind_mode = str(gateway_config.get("bind") or "loopback").strip().lower()
+    port = _qr_gateway_port(app_settings=app_settings, config_snapshot=config_snapshot)
+    scheme = _qr_gateway_scheme(config_snapshot)
+    if bind_mode == "custom":
+        host = _qr_config_text(gateway_config.get("customBindHost"))
+        if host is None:
+            raise ValueError("gateway.bind=custom requires gateway.customBindHost.")
+        return (
+            _normalize_pairing_setup_url(f"{scheme}://{_format_pairing_host(host)}:{port}"),
+            "gateway.bind=custom",
+        )
+    if bind_mode == "lan":
+        host = _resolve_qr_lan_bind_host()
+        if host is None:
+            raise ValueError("gateway.bind=lan set, but no private LAN IP was found.")
+        return (
+            _normalize_pairing_setup_url(f"{scheme}://{_format_pairing_host(host)}:{port}"),
+            "gateway.bind=lan",
+        )
+    if bind_mode == "tailnet":
+        host = _resolve_qr_tailnet_bind_host()
+        if host is None:
+            raise ValueError("gateway.bind=tailnet set, but no tailnet IP was found.")
+        return (
+            _normalize_pairing_setup_url(f"{scheme}://{_format_pairing_host(host)}:{port}"),
+            "gateway.bind=tailnet",
+        )
+    return None
 
 
 _TAILSCALE_STATUS_COMMAND_CANDIDATES = (
@@ -100225,6 +100367,48 @@ def _should_resolve_qr_local_gateway_password_secret(
     return not _has_configured_secret_input(auth_config.get("token"))
 
 
+def _should_resolve_qr_local_gateway_token_secret(
+    config_snapshot: Mapping[str, object] | None,
+) -> bool:
+    if config_snapshot is None:
+        return False
+    if _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_TOKEN")) is not None:
+        return False
+    auth_config = _qr_config_mapping(_qr_gateway_config(config_snapshot).get("auth"))
+    auth_mode = str(auth_config.get("mode") or "").strip().lower()
+    if auth_mode == "token":
+        return True
+    if auth_mode in {"password", "none", "trusted-proxy"}:
+        return False
+    if _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_PASSWORD")) is not None:
+        return False
+    return not _has_configured_secret_input(auth_config.get("password"))
+
+
+def _resolve_qr_local_gateway_token_secret_ref(
+    config_snapshot: Mapping[str, object] | None,
+) -> Mapping[str, object] | None:
+    if config_snapshot is None:
+        return None
+    resolved_snapshot = copy.deepcopy(dict(config_snapshot))
+    gateway = resolved_snapshot.get("gateway")
+    if not isinstance(gateway, dict):
+        return resolved_snapshot
+    auth_config = gateway.get("auth")
+    if not isinstance(auth_config, dict):
+        return resolved_snapshot
+    resolved, ref_label = _resolve_qr_secret_ref_string(
+        resolved_snapshot,
+        value=auth_config.get("token"),
+    )
+    if ref_label is None:
+        return resolved_snapshot
+    if resolved is None:
+        raise ValueError(f"gateway.auth.token SecretRef is unresolved ({ref_label}).")
+    auth_config["token"] = resolved
+    return resolved_snapshot
+
+
 def _resolve_qr_local_gateway_password_secret_ref(
     config_snapshot: Mapping[str, object] | None,
 ) -> Mapping[str, object] | None:
@@ -100271,6 +100455,12 @@ def _normalize_pairing_config_url(raw: str, *, invalid_error: str) -> str:
         raise
 
 
+def _qr_secret_input_text(value: object) -> str | None:
+    if _qr_secret_ref_parts(value) is not None:
+        return None
+    return _qr_config_text(value)
+
+
 def _resolve_qr_auth_label(
     *,
     token: str | None,
@@ -100288,9 +100478,9 @@ def _resolve_qr_auth_label(
     env_password = _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_PASSWORD"))
     if remote:
         remote_config = _qr_gateway_remote_config(config_snapshot)
-        if _qr_config_text(remote_config.get("token")):
+        if _qr_secret_input_text(remote_config.get("token")):
             return "token"
-        if _qr_config_text(remote_config.get("password")):
+        if _qr_secret_input_text(remote_config.get("password")):
             return "password"
 
     auth_config = _qr_config_mapping(gateway_config.get("auth"))
@@ -100306,24 +100496,22 @@ def _resolve_qr_auth_label(
         )
     has_token = (
         env_token is not None
-        or _qr_config_text(auth_config.get("token")) is not None
+        or _qr_secret_input_text(auth_config.get("token")) is not None
     )
     has_password = (
         env_password is not None
-        or _qr_config_text(auth_config.get("password")) is not None
+        or _qr_secret_input_text(auth_config.get("password")) is not None
     )
     if auth_mode == "password":
         if has_password:
             return "password"
-        if remote:
-            raise ValueError(
-                "Gateway auth is set to password, but no password is configured."
-            )
+        raise ValueError(
+            "Gateway auth is set to password, but no password is configured."
+        )
     if auth_mode == "token":
         if has_token:
             return "token"
-        if remote:
-            raise ValueError("Gateway auth is set to token, but no token is configured.")
+        raise ValueError("Gateway auth is set to token, but no token is configured.")
     if has_token:
         return "token"
     if has_password:
@@ -100346,16 +100534,26 @@ def _resolve_qr_gateway_url(
         return _normalize_pairing_setup_url(explicit_url), (
             "cli.url" if str(url or "").strip() else "cli.publicUrl"
         )
+    device_pair_public_url = _qr_device_pair_public_url(config_snapshot)
+    if not remote and device_pair_public_url is not None:
+        return (
+            _normalize_pairing_config_url(
+                device_pair_public_url,
+                invalid_error="Configured publicUrl is invalid.",
+            ),
+            "plugins.entries.device-pair.config.publicUrl",
+        )
     remote_url = _qr_config_text(_qr_gateway_remote_config(config_snapshot).get("url"))
-    if remote:
-        if remote_url:
-            return (
-                _normalize_pairing_config_url(
-                    remote_url,
-                    invalid_error="Configured gateway.remote.url is invalid.",
-                ),
-                "gateway.remote.url",
-            )
+    normalized_remote_url = (
+        _normalize_pairing_config_url(
+            remote_url,
+            invalid_error="Configured gateway.remote.url is invalid.",
+        )
+        if remote_url is not None
+        else None
+    )
+    if remote and normalized_remote_url is not None:
+        return (normalized_remote_url, "gateway.remote.url")
     tailscale_mode = str(
         _qr_gateway_tailscale_config(config_snapshot).get("mode") or "off"
     ).strip().lower()
@@ -100373,9 +100571,17 @@ def _resolve_qr_gateway_url(
         raise ValueError(
             "qr --remote requires gateway.remote.url (or gateway.tailscale.mode=serve/funnel)."
         )
+    if normalized_remote_url is not None:
+        return (normalized_remote_url, "gateway.remote.url")
+    bind_url = _resolve_qr_gateway_bind_url(
+        app_settings=app_settings,
+        config_snapshot=config_snapshot,
+    )
+    if bind_url is not None:
+        return bind_url
     if _is_pairing_loopback_host(app_settings.host):
         raise ValueError(_qr_loopback_bind_error())
-    scheme = "wss" if remote else "ws"
+    scheme = "wss" if remote else _qr_gateway_scheme(config_snapshot)
     return (
         _normalize_pairing_setup_url(
             f"{scheme}://{app_settings.host}:{app_settings.port}"
@@ -100570,24 +100776,25 @@ def qr_command(
                 json_output=json_output,
                 setup_code_only=setup_code_only,
             )
-        elif (
-            not str(token or "").strip()
-            and not str(password or "").strip()
-            and _should_resolve_qr_local_gateway_password_secret(config_snapshot)
-        ):
-            config_snapshot = _resolve_qr_local_gateway_password_secret_ref(
-                config_snapshot
-            )
+        elif not str(token or "").strip() and not str(password or "").strip():
+            if _should_resolve_qr_local_gateway_token_secret(config_snapshot):
+                config_snapshot = _resolve_qr_local_gateway_token_secret_ref(
+                    config_snapshot
+                )
+            if _should_resolve_qr_local_gateway_password_secret(config_snapshot):
+                config_snapshot = _resolve_qr_local_gateway_password_secret_ref(
+                    config_snapshot
+                )
+        auth_label = _resolve_qr_auth_label(
+            token=token,
+            password=password,
+            remote=remote,
+            config_snapshot=config_snapshot,
+        )
         gateway_url, url_source = _resolve_qr_gateway_url(
             app_settings=app_settings,
             url=url,
             public_url=public_url,
-            remote=remote,
-            config_snapshot=config_snapshot,
-        )
-        auth_label = _resolve_qr_auth_label(
-            token=token,
-            password=password,
             remote=remote,
             config_snapshot=config_snapshot,
         )
@@ -106154,6 +106361,8 @@ def _emit_devices_list(payload: dict[str, object], *, json_output: bool) -> None
                 device_id = f"{device_id} - {remote_ip}"
             device_text = f" {device_id}" if device_id is not None else ""
             typer.echo(f"  {request_id}{device_text}")
+            if remote_ip:
+                typer.echo(f"    IP:     {remote_ip}")
             approval = _devices_approval_state(payload, item)
             typer.echo(
                 f"    Status: {_devices_format_approval_kind(approval.get('kind'))}"
@@ -106683,8 +106892,10 @@ def devices_approve_command(
             if guidance is not None:
                 typer.echo(guidance)
             typer.echo(f"Run: {preview['approveCommand']}", err=True)
-            if token_value is not None or password_value is not None:
-                typer.echo("Reuse the same auth flag when running approve.", err=True)
+            if token_value is not None:
+                typer.echo("Reuse the same --token option when rerunning.", err=True)
+            if password_value is not None:
+                typer.echo("Reuse the same --password option when rerunning.", err=True)
         raise typer.Exit(code=1)
 
     result = _run_devices_gateway_node_method(
@@ -106747,10 +106958,9 @@ def devices_rotate_command(
 ) -> None:
     normalized_device_id = _optional_cli_string(device_id)
     normalized_role = _optional_cli_string(role)
-    if normalized_device_id is None:
-        raise typer.BadParameter("--device is required")
-    if normalized_role is None:
-        raise typer.BadParameter("--role is required")
+    if normalized_device_id is None or normalized_role is None:
+        typer.echo("--device and --role required", err=True)
+        raise typer.Exit(code=1)
     normalized_scopes = [
         scope for raw_scope in scopes or [] if (scope := _optional_cli_string(raw_scope))
     ]
@@ -106787,10 +106997,9 @@ def devices_revoke_command(
 ) -> None:
     normalized_device_id = _optional_cli_string(device_id)
     normalized_role = _optional_cli_string(role)
-    if normalized_device_id is None:
-        raise typer.BadParameter("--device is required")
-    if normalized_role is None:
-        raise typer.BadParameter("--role is required")
+    if normalized_device_id is None or normalized_role is None:
+        typer.echo("--device and --role required", err=True)
+        raise typer.Exit(code=1)
 
     result = _run_devices_gateway_node_method(
         "device.token.revoke",

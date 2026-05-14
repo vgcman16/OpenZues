@@ -13211,3 +13211,128 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   remains estimated at ~99.9%, and packaging/companion breadth moves to ~8.1%.
   Continue companion-app device flows, packaging/distribution, ACP lifecycle,
   provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues devices approve --latest`
+  human previews now preserve safe rerun flags while redacting auth secrets and
+  printing token/password-specific rerun guidance. Source/test checkpointed in
+  `2c8f191d`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.2%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
+- Current queue-head adjustment: native implicit/latest
+  `openzues devices approve` human previews now print labeled sanitized `IP:`
+  details for selected pending requests. Source/test checkpointed in
+  `d20e583e`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.3%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues devices rotate` and
+  `openzues devices revoke` now reject blank device or role values with the
+  OpenClaw-shaped `--device and --role required` error before gateway dispatch.
+  Source/test checkpointed in `c52ba967`; repo-wide parity remains estimated at
+  ~99.9%, and packaging/companion breadth moves to ~8.4%. Continue
+  companion-app device flows, packaging/distribution, ACP lifecycle, provider
+  action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now uses
+  `plugins.entries.device-pair.config.publicUrl` as the local setup-code URL
+  fallback when no explicit CLI URL is provided. Source/test checkpointed in
+  `d336dc98`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.5%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now validates configured
+  `gateway.remote.url` before bind fallback and uses valid remote URLs as the
+  post-Tailscale non-remote setup-code fallback. Source/test checkpointed in
+  `ce3f78cd`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.6%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now honors
+  `gateway.bind=custom` with `gateway.customBindHost` and `gateway.port` for
+  non-remote setup-code URL derivation, and validates public cleartext custom
+  hosts before token issuance. Source/test checkpointed in `306b68dc`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~8.7%. Continue companion-app device flows,
+  packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now honors
+  `gateway.bind=lan` through a fakeable private-LAN IPv4 probe and returns the
+  OpenClaw-shaped missing-LAN-IP error before bootstrap-token issuance.
+  Source/test checkpointed in `c4f1acca`; repo-wide parity remains estimated
+  at ~99.9%, and packaging/companion breadth moves to ~8.8%. Continue
+  companion-app device flows, packaging/distribution, ACP lifecycle, provider
+  action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now honors
+  `gateway.bind=tailnet` through a fakeable 100.64/10 probe, validates the
+  derived tailnet setup URL through mobile pairing cleartext policy, and
+  returns the OpenClaw-shaped missing-tailnet-IP error before token issuance.
+  Source/test checkpointed in `6ad6f756`; repo-wide parity remains estimated
+  at ~99.9%, and packaging/companion breadth moves to ~8.9%. Continue
+  companion-app device flows, packaging/distribution, ACP lifecycle, provider
+  action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now rejects scheme-like
+  path public URLs such as `http:/localhost:notaport` before setup-code
+  generation. Source/test checkpointed in `5dda873e`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~9.0%.
+  Continue companion-app device flows, packaging/distribution, ACP lifecycle,
+  provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now derives bind-based
+  setup-code URL schemes from `gateway.tls.enabled` for custom/LAN/tailnet and
+  settings fallbacks. Source/test checkpointed in `51efda66`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to ~9.1%.
+  Continue companion-app device flows, packaging/distribution, ACP lifecycle,
+  provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now treats explicit
+  `gateway.auth.mode=password` as a hard password requirement for local setup
+  codes, preventing env-token/bootstrap-token fallback when no password is
+  configured. Source/test checkpointed in `56dcdee9`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~9.2%.
+  Continue companion-app device flows, packaging/distribution, ACP lifecycle,
+  provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now treats explicit
+  `gateway.auth.mode=token` as a hard token requirement for local setup codes,
+  preventing password/bootstrap-token fallback when no token is configured.
+  Source/test checkpointed in `49846f75`; repo-wide parity remains estimated
+  at ~99.9%, and packaging/companion breadth moves to ~9.3%. Continue
+  companion-app device flows, packaging/distribution, ACP lifecycle, provider
+  action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now materializes local
+  `gateway.auth.token` SecretRefs before setup-code auth resolution and keeps
+  resolved token values out of CLI output. Source/test checkpointed in
+  `5ca11f09`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~9.4%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now allows explicit
+  `gateway.bind=custom` loopback hosts while keeping the implicit loopback
+  fallback preflight. Source/test checkpointed in `8b546000`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to ~9.5%.
+  Continue companion-app device flows, packaging/distribution, ACP lifecycle,
+  provider action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now resolves setup-code
+  auth before gateway URL selection, so explicit missing-auth errors take
+  precedence over loopback/remote URL preflights. Source/test checkpointed in
+  `894a0bb0`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~9.6%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now ignores unresolved
+  SecretRef-shaped auth strings during inferred-mode auth selection, allowing
+  a real password env candidate to win over `${MISSING_GW_TOKEN}`. Source/test
+  checkpointed in `27def1fb`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~9.7%. Continue companion-app
+  device flows, packaging/distribution, ACP lifecycle, provider action breadth,
+  or setup/onboarding gaps.
+- Current queue-head adjustment: native Zalo direct-DM pairing replies now
+  preserve OpenClaw profile/container command context in the owner approval
+  command, matching upstream `buildPairingReply` command formatting.
+  Source/test checkpointed in `a5574ff2`; repo-wide parity remains estimated
+  at ~99.9%, and packaging/companion breadth moves to ~9.8%. Continue
+  companion-app device flows, packaging/distribution, ACP lifecycle, provider
+  action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native OpenClaw plugin SDK
+  `buildPairingReply` now preserves OpenClaw profile/container command context
+  for imported plugin runtimes. Source/test checkpointed in `d137a71f`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~9.9%. Continue companion-app device flows,
+  packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.

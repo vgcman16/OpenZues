@@ -73,6 +73,7 @@ from openzues.services.ops_mesh import (
     _serialize_task,
     _TlonRouteConfig,
     _TwitchRouteConfig,
+    _zalo_pairing_reply_text,
     build_ops_mesh,
 )
 from openzues.services.session_keys import build_launch_session_key, resolve_thread_session_keys
@@ -36921,6 +36922,23 @@ async def test_ops_mesh_service_handle_zalo_webhook_issues_pairing_challenge_for
             }
         ],
     }
+
+
+def test_zalo_pairing_reply_formats_profile_aware_openclaw_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENCLAW_CONTAINER_HINT", raising=False)
+    monkeypatch.setenv("OPENCLAW_PROFILE", "isolated")
+
+    text = _zalo_pairing_reply_text(
+        code="PAIR12",
+        sender_id_line="Your Zalo user id: unknown-user",
+    )
+
+    approve_command = "openclaw --profile isolated pairing approve zalo PAIR12"
+    assert text.count(approve_command) == 2
+    assert "openclaw pairing approve zalo PAIR12" not in text
+    assert "Your Zalo user id: unknown-user" in text
 
 
 @pytest.mark.asyncio

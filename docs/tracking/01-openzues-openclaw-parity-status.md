@@ -2,7 +2,7 @@
 
 Agent report source: Gauss
 
-Last updated: 2026-05-13
+Last updated: 2026-05-14
 
 Primary ledgers:
 
@@ -23,10 +23,10 @@ may lag behind this tracker.
 | Provider-native inbound/outbound breadth | ~99.999999% | High for bounded provider path | Slack block/modal/slash ingress, command arg interactions/options/hydration/rendering/external-select proof, provider command aliases/plugin-command injection, WhatsApp reusable reply fanout, Telegram media reply fanout/caption passthrough, Feishu media implicit reply fanout, Matrix implicit reply fanout, IRC media attachment formatting, Discord multi-media implicit reply fanout, Telegram stale-thread JSON and HTTP retry fallback, Discord video-caption split delivery, Discord voice message sends, Discord direct audio-as-voice media sends, Signal receive envelope session routing with sync-message drops, QQBot route-backed text sends, QQBot image media uploads, QQBot inline image media tags, QQBot structured self-closing media tags, QQBot reply message sequencing, QQBot local media file-data uploads, QQBot chunked local media uploads, QQBot voice-to-file fallback, QQBot file-media text follow-up delivery, QQBot direct image/video media text follow-up delivery, QQBot inline media text ordering/result metadata, LINE signed webhook ingress/text/postback/media-placeholder/sticker/location delivery, group mention gating, native LINE mention metadata handling, LINE group pending-history replay, non-text group media mention-gate bypass, LINE inbound media staging, production credential-backed LINE media download, LINE webhook redelivery dedupe, authenticated Zalo webhook ingress, Zalo text webhook session delivery/replay dedupe, Zalo image webhook media URL delivery, fakeable Zalo inbound image staging, production Zalo inbound media fetch, Zalo direct-DM disabled policy, Zalo group allowlist policy, Zalo direct-DM pairing challenge, Zalo pairing allowFrom-store authorization, Zalo pairing approval store mutation, Zalo pairing request listing, Zalo pairing CLI list/approve, Zalo pairing approval notification CLI, Zalo pairing command-owner bootstrap, Zalo pairing list default, Zalo pairing command-owner explanation, Zalo pairing approval not-found text, disabled channel capability actions, and env/file/exec HTTP signing SecretRefs are checkpointed; broader provider inventory still open |
 | Runtime/CLI/doctor native bridge | ~99.99999992% | High for bounded native bridge | ACP persisted task-record child-cap counting, ACP parent-stream requester-context preflight, ACP resume requester-context preflight, ACP resume ownership, ACP model/thinking overrides, ACP configured runtime-agent aliases, ACP native-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP dispatch-failure cleanup, ACP registration-failure cleanup, Docker runtime home bootstrap, packaging post-core resume/fresh-process handoff, runtime exit-signal labels, installed facade registry fallback, startup-optimization doctor notes, and installed runtime contribution capture are checkpointed; deeper ACP bridge edge cases and installed plugin activation remain |
 | CLI/operator control plane | ~99.99999% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
-| Packaging/companion app breadth | ~8.1% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, and device approve human preview context are landed; companion apps remain mostly open |
+| Packaging/companion app breadth | ~9.9% | Low, broad parity still open | QR setup-code safety, local/remote SecretRef slices, Zalo/plugin-SDK profile-aware pairing approval commands, device pairing CLI mutations, approve-preview gateway flag preservation, remote device command dispatch, configured remote defaults, loopback fallback, approval-state preview metadata, device token scope-preserving rotation, approved-role gates, approved-scope baselines, requested-scope approval gates, inherited-scope rotation caller gates, scoped revocation caller gates, pairing repair inherited-token scope gates, cross-device token mutation guards, operator-admin scope compatibility, approval-seeded device-auth tokens, rotated-token raw-value redaction, cross-device pairing removal guards, cross-device pairing resolution guards, device-bound pairing list visibility, device-auth active-client disconnects, terminal QR rendering, ambiguous QR auth-mode rejection, device CLI terminal-output sanitization, device CLI upgrade-context rendering, device CLI public-key mismatch handling, device approve human preview context, device approve auth-rerun guidance, device approve preview IP sanitization, blank device-token target rejection, QR device-pair publicUrl fallback, QR configured remote URL fallback/validation, QR custom bind URL derivation, QR custom loopback bind parity, QR auth-before-URL ordering, QR SecretRef-template inference, QR LAN bind URL derivation, QR tailnet bind handling, QR scheme-like public URL rejection, QR bind TLS scheme parity, QR password auth hard requirement, QR token auth hard requirement, and QR local token SecretRef resolution are landed; companion apps remain mostly open |
 
-Latest verified adjustment: `OZ-COMP-001AR` device approve human preview
-context moves packaging/companion breadth to ~8.1%; repo-wide OpenClaw
+Latest verified adjustment: `OZ-COMP-001BJ` plugin SDK profile-aware pairing
+approval commands move packaging/companion breadth to ~9.9%; repo-wide OpenClaw
 parity remains estimated at ~99.9%.
 
 ## Implemented / Locked Bounded Areas
@@ -11432,6 +11432,358 @@ parity remains estimated at ~99.9%.
     `none`, then `1 passed`), adjacent device CLI proof
     `python -m pytest tests\test_cli.py -q -k "devices_approve_latest_human_renders_selected_approval_context or devices_approve_latest or devices_list_human_output_treats_public_key_mismatch_as_new_pairing or devices_list_human_output_renders_requested_and_approved_access or devices_list_human_output_sanitizes_device_controlled_fields or devices_list or devices_clear or devices_mutation_commands or devices_remote_mutation"`
     (`21 passed, 610 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] `OZ-COMP-001AS` Device approve auth-rerun guidance.
+  - Source: `openclaw-main/src/cli/devices-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: implicit/latest `openzues devices approve` human previews include
+    safe rerun gateway flags and token/password-specific guidance while
+    redacting auth secret values.
+  - Evidence required: focused auth-rerun proof, adjacent device CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `2c8f191d`
+  - Weight: 1
+  - Last verified: 2026-05-13, focused red/green
+    `python -m pytest tests\test_cli.py::test_devices_approve_latest_human_preserves_gateway_flags_without_secrets -q`
+    (`1 failed` before implementation because guidance was generic, then `1
+    passed`), adjacent device CLI proof
+    `python -m pytest tests\test_cli.py -q -k "devices_approve_latest_human_preserves_gateway_flags_without_secrets or devices_approve_latest_human_renders_selected_approval_context or devices_approve_latest or devices_list_human_output_treats_public_key_mismatch_as_new_pairing or devices_list_human_output_renders_requested_and_approved_access or devices_list_human_output_sanitizes_device_controlled_fields or devices_list or devices_clear or devices_mutation_commands or devices_remote_mutation"`
+    (`22 passed, 610 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] `OZ-COMP-001AT` Device approve preview IP sanitization.
+  - Source: `openclaw-main/src/cli/devices-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: implicit/latest `openzues devices approve` human previews print a
+    labeled `IP:` detail line with terminal-control characters stripped from
+    the selected pending request's remote IP.
+  - Evidence required: focused preview-IP proof, adjacent device CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `d20e583e`
+  - Weight: 1
+  - Last verified: 2026-05-13, focused red/green
+    `python -m pytest tests\test_cli.py::test_devices_approve_latest_human_sanitizes_preview_ip_output -q`
+    (`1 failed` before implementation because the sanitized IP was unlabeled,
+    then `1 passed`), adjacent device CLI proof
+    `python -m pytest tests\test_cli.py -q -k "devices_approve_latest_human_sanitizes_preview_ip_output or devices_approve_latest_human_preserves_gateway_flags_without_secrets or devices_approve_latest_human_renders_selected_approval_context or devices_approve_latest or devices_list_human_output_treats_public_key_mismatch_as_new_pairing or devices_list_human_output_renders_requested_and_approved_access or devices_list_human_output_sanitizes_device_controlled_fields or devices_list or devices_clear or devices_mutation_commands or devices_remote_mutation"`
+    (`23 passed, 610 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] `OZ-COMP-001AU` Blank device-token target rejection.
+  - Source: `openclaw-main/src/cli/devices-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues devices rotate` and `openzues devices revoke` reject
+    blank `--device` or `--role` values with `--device and --role required`
+    before gateway dispatch.
+  - Evidence required: focused blank-target proof, adjacent device CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `c52ba967`
+  - Weight: 1
+  - Last verified: 2026-05-13, focused red/green
+    `python -m pytest tests\test_cli.py::test_devices_rotate_rejects_blank_device_or_role_before_dispatch -q`
+    (`1 failed` before implementation because Typer returned a generic
+    parameter error, then `1 passed`), adjacent device CLI proof
+    `python -m pytest tests\test_cli.py -q -k "devices_rotate_rejects_blank_device_or_role_before_dispatch or devices_approve_latest or devices_list_human_output or devices_list or devices_clear or devices_mutation_commands or devices_remote_mutation"`
+    (`24 passed, 610 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] `OZ-COMP-001AV` QR device-pair publicUrl fallback.
+  - Source: `openclaw-main/src/cli/qr-cli.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: non-remote `openzues qr` uses
+    `plugins.entries.device-pair.config.publicUrl` as the setup-code URL source
+    when no explicit CLI URL is provided.
+  - Evidence required: focused device-pair publicUrl proof, adjacent QR CLI
+    proof, ruff, mypy
+  - Status: checkpointed in `d336dc98`
+  - Weight: 1
+  - Last verified: 2026-05-13, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_uses_device_pair_public_url_from_config_when_url_omitted -q`
+    (`1 failed` before implementation because loopback fallback rejected setup
+    generation, then `1 passed`), adjacent QR CLI proof
+    `python -m pytest tests\test_cli.py -q -k "qr_"` (`19 passed, 616
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AW` QR configured remote URL fallback/validation.
+  - Source: `openclaw-main/src/pairing/setup-code.ts`,
+    `openclaw-main/src/pairing/setup-code.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: non-remote `openzues qr` validates configured
+    `gateway.remote.url` before bind fallback and uses a valid configured
+    remote URL as the post-Tailscale setup-code URL fallback when no explicit
+    CLI URL or device-pair public URL is provided.
+  - Evidence required: focused configured remote URL proof, adjacent QR CLI
+    proof, ruff, mypy
+  - Status: checkpointed in `ce3f78cd`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_uses_configured_remote_url_as_local_fallback_when_url_omitted tests\test_cli.py::test_qr_rejects_invalid_configured_remote_url_before_bind_fallback -q`
+    (`2 failed` before implementation because configured remote URL was
+    ignored or validated too late, then `2 passed`), adjacent QR CLI proof
+    `python -m pytest tests\test_cli.py -q -k "qr_"` (`21 passed, 616
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AX` QR custom bind URL derivation.
+  - Source: `openclaw-main/src/pairing/setup-code.ts`,
+    `openclaw-main/src/shared/gateway-bind-url.ts`,
+    `openclaw-main/src/cli/qr-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: non-remote `openzues qr` derives setup-code URLs from
+    `gateway.bind=custom`, `gateway.customBindHost`, and `gateway.port` after
+    public URL, remote URL, and Tailscale sources, validates the derived URL,
+    and rejects public cleartext custom hosts before issuing a bootstrap token.
+  - Evidence required: focused custom-bind QR proof, adjacent QR CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `306b68dc`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_uses_custom_bind_host_from_config_when_url_omitted tests\test_cli.py::test_qr_rejects_public_custom_bind_host_before_token_issue -q`
+    (`2 failed` before implementation because custom bind config was ignored,
+    then `2 passed`), adjacent QR CLI proof
+    `python -m pytest tests\test_cli.py -q -k "qr_"` (`23 passed, 616
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AY` QR LAN bind URL derivation.
+  - Source: `openclaw-main/src/pairing/setup-code.ts`,
+    `openclaw-main/src/shared/gateway-bind-url.ts`,
+    `openclaw-main/src/cli/qr-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: non-remote `openzues qr` derives setup-code URLs from
+    `gateway.bind=lan` by using a private LAN IPv4 network probe with
+    `gateway.port`, exposes `gateway.bind=lan` as the URL source, and returns
+    the OpenClaw-shaped no-LAN-IP error before issuing a bootstrap token when
+    no private LAN address is available.
+  - Evidence required: focused LAN-bind QR proof, adjacent QR CLI proof, ruff,
+    mypy
+  - Status: checkpointed in `c4f1acca`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_uses_lan_bind_host_from_network_probe tests\test_cli.py::test_qr_lan_bind_reports_missing_private_lan_ip_before_token_issue -q`
+    (`2 failed` before implementation because LAN bind config fell through to
+    the generic loopback preflight, then `2 passed`), adjacent QR CLI proof
+    `python -m pytest tests\test_cli.py -q -k "qr_"` (`25 passed, 616
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001AZ` QR tailnet bind handling.
+  - Source: `openclaw-main/src/pairing/setup-code.ts`,
+    `openclaw-main/src/shared/gateway-bind-url.ts`,
+    `openclaw-main/src/cli/qr-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: non-remote `openzues qr` handles `gateway.bind=tailnet` by
+    probing a fakeable 100.64/10 tailnet IPv4, validating the derived setup URL
+    through mobile-pairing cleartext policy, and returning the OpenClaw-shaped
+    no-tailnet-IP error before issuing a bootstrap token when no tailnet
+    address is available.
+  - Evidence required: focused tailnet-bind QR proof, adjacent QR CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `6ad6f756`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_rejects_tailnet_bind_cleartext_url_before_token_issue tests\test_cli.py::test_qr_tailnet_bind_reports_missing_tailnet_ip_before_token_issue -q`
+    (`2 failed` before implementation because tailnet bind config fell through
+    to the generic loopback preflight, then `2 passed`), adjacent QR CLI proof
+    `python -m pytest tests\test_cli.py -q -k "qr_"` (`27 passed, 616
+    deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001BA` QR scheme-like public URL rejection.
+  - Source: `openclaw-main/src/pairing/setup-code.ts`,
+    `openclaw-main/src/pairing/setup-code.test.ts`,
+    `openclaw-main/src/cli/qr-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues qr --public-url` rejects scheme-like path inputs such
+    as `http:/localhost:notaport` before fallback normalization, does not
+    print a setup code, and does not issue a bootstrap token.
+  - Evidence required: focused invalid publicUrl proof, adjacent QR CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `5dda873e`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_setup_code_only_rejects_scheme_like_path_public_url_before_token_issue -q`
+    (`1 failed` before implementation because a setup code was printed, then
+    `1 passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py -q
+    -k "qr_"` (`28 passed, 616 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] `OZ-COMP-001BB` QR bind TLS scheme parity.
+  - Source: `openclaw-main/src/pairing/setup-code.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: bind-derived QR setup-code URLs use `wss://` when
+    `gateway.tls.enabled=true` and keep `ws://` otherwise, matching
+    OpenClaw's `resolveScheme` behavior for custom/LAN/tailnet/settings URL
+    derivation.
+  - Evidence required: focused TLS bind QR proof, adjacent QR CLI proof, ruff,
+    mypy
+  - Status: checkpointed in `51efda66`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_uses_tls_scheme_for_custom_bind_host_when_enabled -q`
+    (`1 failed` before implementation because the URL remained `ws://`, then
+    `1 passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py -q
+    -k "qr_"` (`29 passed, 616 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] `OZ-COMP-001BC` QR password auth hard requirement.
+  - Source: `openclaw-main/src/pairing/setup-code.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: explicit `gateway.auth.mode=password` must require a configured
+    password before setup-code issuance and must not fall through to env-token
+    or bootstrap-token auth locally.
+  - Evidence required: focused password-mode QR proof, adjacent QR CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `56dcdee9`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_password_auth_mode_requires_password_before_token_issue -q`
+    (`1 failed` before implementation because a setup code was accepted with
+    exit `0`, then `1 passed`), adjacent QR CLI proof `python -m pytest
+    tests\test_cli.py -q -k "qr_"` (`30 passed, 616 deselected`), ruff, mypy,
+    and focused `git diff --check`.
+
+- [x] `OZ-COMP-001BD` QR token auth hard requirement.
+  - Source: `openclaw-main/src/pairing/setup-code.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: explicit `gateway.auth.mode=token` must require a configured
+    token before setup-code issuance and must not fall through to password or
+    bootstrap-token auth locally.
+  - Evidence required: focused token-mode QR proof, adjacent QR CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `49846f75`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_token_auth_mode_requires_token_before_token_issue -q`
+    (`1 failed` before implementation because a setup code was accepted with
+    exit `0`, then `1 passed`), adjacent QR CLI proof `python -m pytest
+    tests\test_cli.py -q -k "qr_"` (`31 passed, 616 deselected`), ruff, mypy,
+    and focused `git diff --check`.
+
+- [x] `OZ-COMP-001BE` QR local token SecretRef resolution.
+  - Source: `openclaw-main/src/gateway/auth-config-utils.ts`,
+    `openclaw-main/src/pairing/setup-code.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: local QR setup-code generation resolves
+    `gateway.auth.token` SecretRefs when token mode or inferred-token rules
+    require them, then reports `auth=token` without leaking resolved secret
+    values to stdout/stderr.
+  - Evidence required: focused local token SecretRef QR proof, adjacent QR CLI
+    proof, ruff, mypy
+  - Status: checkpointed in `5ca11f09`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_local_json_resolves_gateway_token_secretref -q`
+    (`1 failed` before implementation because explicit token mode reported no
+    configured token, then `1 passed`), adjacent QR CLI proof `python -m
+    pytest tests\test_cli.py -q -k "qr_"` (`32 passed, 616 deselected`),
+    ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001BF` QR custom loopback bind parity.
+  - Source: `openclaw-main/src/shared/gateway-bind-url.ts`,
+    `openclaw-main/src/pairing/setup-code.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: explicit `gateway.bind=custom` with a loopback
+    `gateway.customBindHost` produces a bind-derived setup-code URL, while
+    implicit loopback fallback remains unavailable without explicit URL/bind
+    configuration.
+  - Evidence required: focused custom-loopback QR proof, adjacent QR CLI
+    proof, ruff, mypy
+  - Status: checkpointed in `8b546000`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_allows_explicit_custom_loopback_bind_host -q`
+    (`1 failed` before implementation because custom bind hit the loopback
+    preflight, then `1 passed`), adjacent QR CLI proof `python -m pytest
+    tests\test_cli.py -q -k "qr_"` (`33 passed, 616 deselected`), ruff, mypy,
+    and focused `git diff --check`.
+
+- [x] `OZ-COMP-001BG` QR auth-before-URL ordering.
+  - Source: `openclaw-main/src/pairing/setup-code.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: setup-code auth-label resolution happens before gateway URL
+    resolution, so explicit missing token/password errors are returned before
+    loopback, remote, or bind URL preflight errors; bootstrap tokens are still
+    issued only after both checks pass.
+  - Evidence required: focused auth-order QR proof, adjacent QR CLI proof,
+    ruff, mypy
+  - Status: checkpointed in `894a0bb0`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_auth_error_precedes_loopback_url_resolution_before_token_issue -q`
+    (`1 failed` before implementation because the loopback URL error won, then
+    `1 passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py -q
+    -k "qr_"` (`34 passed, 616 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] `OZ-COMP-001BH` QR SecretRef-template inference.
+  - Source: `openclaw-main/src/gateway/auth-config-utils.ts`,
+    `openclaw-main/src/pairing/setup-code.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: inferred-mode auth selection treats SecretRef-shaped strings as
+    unresolved references rather than plaintext auth material, allowing real
+    env/config candidates on the other auth path to win without leaking
+    secrets.
+  - Evidence required: focused SecretRef-template inference QR proof, adjacent
+    QR CLI proof, ruff, mypy
+  - Status: checkpointed in `27def1fb`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_cli.py::test_qr_inferred_mode_ignores_unresolved_token_template_when_password_env_set -q`
+    (`1 failed` before implementation because auth resolved as `token`, then
+    `1 passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py -q
+    -k "qr_"` (`35 passed, 616 deselected`), ruff, mypy, and focused
+    `git diff --check`.
+
+- [x] `OZ-COMP-001BI` Zalo profile-aware pairing approval commands.
+  - Source: `openclaw-main/src/pairing/pairing-messages.ts`,
+    `openclaw-main/src/cli/command-format.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Zalo direct-DM pairing replies preserve OpenClaw
+    profile/container command context in both owner approval command lines.
+  - Evidence required: focused Zalo pairing reply proof, adjacent Zalo pairing
+    proof, ruff, mypy
+  - Status: checkpointed in `a5574ff2`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_ops_mesh.py::test_zalo_pairing_reply_formats_profile_aware_openclaw_command -q`
+    (`1 failed` before implementation because the reply emitted the bare
+    approval command, then `1 passed`), adjacent Zalo pairing proof
+    `python -m pytest tests\test_ops_mesh.py -q -k "zalo and pairing"` (`5
+    passed, 506 deselected`), ruff, mypy, and focused `git diff --check`.
+
+- [x] `OZ-COMP-001BJ` Plugin SDK profile-aware pairing approval commands.
+  - Source: `openclaw-main/src/pairing/pairing-messages.ts`,
+    `openclaw-main/src/cli/command-format.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported native OpenClaw plugin runtimes see
+    `buildPairingReply` approval commands formatted with active profile or
+    container hints before the message is returned to provider/channel code.
+  - Evidence required: focused imported plugin pairing reply proof, adjacent
+    plugin helper proof, ruff, mypy
+  - Status: checkpointed in `d137a71f`
+  - Weight: 1
+  - Last verified: 2026-05-14, focused red/green
+    `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_pairing_reply_uses_profile_hint -q`
+    (`1 failed` before implementation because the helper emitted the bare
+    approval command, then `1 passed`), adjacent imported helper proof
+    `python -m pytest tests\test_gateway_node_methods.py -q -k "pairing_reply or conversation_binding_runtime_helpers"`
+    (`3 passed, 1300 deselected`), ruff, mypy, and focused
     `git diff --check`.
 
 ## Update Rule

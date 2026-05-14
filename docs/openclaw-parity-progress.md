@@ -8,20 +8,18 @@
 - Estimated chat/session contract subfamily parity: ~99.987% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, `artifacts.list` / `artifacts.get` / `artifacts.download`, `agentRuntime` session metadata projection, sandboxed remote media staging, `tools.invoke`, and Tlon monitor lifecycle slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99.995%;
   it is no longer the active queue head.
-- Estimated packaging/companion app breadth: ~7.2% after QR setup-code
-  safety/SecretRef slices and device pairing CLI list/approve plus
-  approve preview gateway/auth flag preservation, remote list/approve gateway
-  dispatch, remote mutation dispatch, configured remote URL defaults,
-  loopback pairing-required fallback, approval-state preview metadata, and
-  remove/clear/reject/rotate/revoke coverage, device token scope-preserving
-  rotation, approved-role device token rotation gates, approved-scope device
-  token rotation baselines, requested operator-scope pairing approval gates,
-  inherited-scope rotation caller gates, scoped token revocation caller gates,
-  pairing repair inherited-token scope gates, device-token cross-device
-  mutation guards, operator-admin scope compatibility for device-token
-  rotation, pairing approval seeded device-auth tokens, rotated token raw-value
-  redaction for unbound callers, cross-device pairing removal guards, and
-  local QR password SecretRef resolution; companion apps remain broadly open.
+- Estimated packaging/companion app breadth: ~9.9% after QR setup-code
+  safety/SecretRef slices, local QR token/password SecretRef resolution,
+  SecretRef-template inference, explicit-auth hard-requirement, and
+  auth-before-URL ordering parity,
+  bind/remote/public URL derivation and validation, custom-loopback bind
+  parity, device pairing CLI
+  list/approve/mutation coverage, approve preview gateway/auth flag
+  preservation, remote device dispatch, configured remote defaults, loopback
+  pairing-required fallback, approval-state preview metadata, terminal QR
+  rendering, Zalo/plugin-SDK profile-aware pairing approval commands, and
+  device-token scope/caller/visibility/disconnect guards; companion apps
+  remain broadly open.
 - Estimated runtime/CLI/doctor native-bridge parity: ~99.99999992% after the runtime bridge doctor posture, native ACP client interactive replay, ACP persisted task-record child-cap counting, ACP `streamTo="parent"` requester-context preflight, ACP `resumeSessionId` requester-context preflight, ACP `resumeSessionId` ownership enforcement, ACP model/thinking override propagation, ACP configured runtime agent alias mapping, ACP runtime-agent mismatch preflight, ACP run-timeout runtime propagation, ACP subagent depth/child-cap policy, ACP subagent target allowlist policy, ACP route-backed thread binding, ACP thread-binding dispatch-failure cleanup, ACP accepted-spawn registration-failure cleanup, Docker runtime home bootstrap, secrets reload CLI surface, QR remote config lookup/auth/Tailscale MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth preflight, devices list/approve CLI, native Zalo pairing list/approve/notify CLI, command-owner bootstrap, list default, bootstrap explanation, not-found error text, and disabled-account capability action gating, package-update downgrade confirmation, stored-channel package update dispatch, package-update post-core resume mode, package-update post-core fresh-process handoff, runtime exit-signal labels, installed plugin facade registry fallback, startup-optimization doctor notes, installed runtime session/control-UI contribution capture, package-update Node engine preflight, package-update activated plugin/channel-probe/version-mismatch/unhealthy-snapshot restart-health failure with restart-log/status follow-up diagnostics, gateway health `serverVersion` projection, `gateway status --deep` CLI alias coverage, owning npm/pnpm/bun global-root package update detection, interactive git-checkout doctor update offer, package post-update completion-cache refresh, all-shell completion cache write-state, provider route send/poll alias-precedence, Tlon route-backed account probe, iMessage config-backed CLI/RPC account probe, plugin runtime executor inventory, provider-gated plugin native command specs, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, active-registry session-extension/control-UI projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin source SDK subpath alias runtime activation and execution through `tools.invoke`, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect human typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through the runtime/helper facade queue; remaining gaps are packaging/distribution breadth, deeper ACP bridge lifecycle edge cases, deeper installed plugin module import/activation, and broader runtime command ergonomics.
 - Estimated provider-native inbound/outbound breadth: ~99.999999% after Slack
   event/interactions/slash/signing coverage, command aliases/plugin command
@@ -25032,6 +25030,267 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`21 passed, 610 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
   `git diff --check`. Source/test checkpointed in `091d01dd`.
+
+- Native `openzues devices approve --latest` human previews now preserve safe
+  rerun flags such as `--url` and `--timeout`, redact auth secrets from the
+  displayed command, and print token/password-specific rerun guidance when
+  auth flags were used. This closes `OZ-COMP-001AS`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~8.2%.
+- Verified device approve auth rerun guidance with focused red/green
+  `python -m pytest tests\test_cli.py::test_devices_approve_latest_human_preserves_gateway_flags_without_secrets -q`
+  (`1 failed` before implementation because guidance was generic, then `1
+  passed`), adjacent device CLI proof `python -m pytest tests\test_cli.py -q -k
+  "devices_approve_latest_human_preserves_gateway_flags_without_secrets or
+  devices_approve_latest_human_renders_selected_approval_context or
+  devices_approve_latest or
+  devices_list_human_output_treats_public_key_mismatch_as_new_pairing or
+  devices_list_human_output_renders_requested_and_approved_access or
+  devices_list_human_output_sanitizes_device_controlled_fields or devices_list
+  or devices_clear or devices_mutation_commands or devices_remote_mutation"`
+  (`22 passed, 610 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `2c8f191d`.
+
+- Native implicit/latest `openzues devices approve` human previews now print a
+  labeled, sanitized `IP:` detail line for selected pending requests, matching
+  OpenClaw's log-forging guard around remote IP text. This closes
+  `OZ-COMP-001AT`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.3%.
+- Verified device approve preview IP sanitization with focused red/green
+  `python -m pytest tests\test_cli.py::test_devices_approve_latest_human_sanitizes_preview_ip_output -q`
+  (`1 failed` before implementation because the sanitized IP was unlabeled,
+  then `1 passed`), adjacent device CLI proof `python -m pytest
+  tests\test_cli.py -q -k "devices_approve_latest_human_sanitizes_preview_ip_output or devices_approve_latest_human_preserves_gateway_flags_without_secrets or devices_approve_latest_human_renders_selected_approval_context or devices_approve_latest or devices_list_human_output_treats_public_key_mismatch_as_new_pairing or devices_list_human_output_renders_requested_and_approved_access or devices_list_human_output_sanitizes_device_controlled_fields or devices_list or devices_clear or devices_mutation_commands or devices_remote_mutation"`
+  (`23 passed, 610 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `d20e583e`.
+
+- Native `openzues devices rotate` and `openzues devices revoke` now reject
+  blank `--device` or `--role` values with the OpenClaw-shaped
+  `--device and --role required` error before dispatching to the gateway. This
+  closes `OZ-COMP-001AU`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.4%.
+- Verified blank device-token target rejection with focused red/green
+  `python -m pytest tests\test_cli.py::test_devices_rotate_rejects_blank_device_or_role_before_dispatch -q`
+  (`1 failed` before implementation because Typer returned a generic parameter
+  error, then `1 passed`), adjacent device CLI proof `python -m pytest
+  tests\test_cli.py -q -k "devices_rotate_rejects_blank_device_or_role_before_dispatch or devices_approve_latest or devices_list_human_output or devices_list or devices_clear or devices_mutation_commands or devices_remote_mutation"`
+  (`24 passed, 610 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused
+  `git diff --check`. Source/test checkpointed in `c52ba967`.
+
+- Native `openzues qr` now uses
+  `plugins.entries.device-pair.config.publicUrl` as the non-remote setup-code
+  URL fallback when no explicit CLI URL is provided, matching OpenClaw's
+  device-pair plugin configuration behavior while still letting `--remote`
+  ignore that URL. This closes `OZ-COMP-001AV`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~8.5%.
+- Verified QR device-pair publicUrl fallback with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_uses_device_pair_public_url_from_config_when_url_omitted -q`
+  (`1 failed` before implementation because loopback fallback rejected setup
+  generation, then `1 passed`), adjacent QR CLI proof `python -m pytest
+  tests\test_cli.py -q -k "qr_"` (`19 passed, 616 deselected`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `d336dc98`.
+
+- Native `openzues qr` now validates configured `gateway.remote.url` before
+  falling back to bind-derived URLs and uses a valid remote URL as the
+  post-Tailscale non-remote setup-code fallback, matching OpenClaw's pairing
+  resolver. This closes `OZ-COMP-001AW`; repo-wide parity remains estimated at
+  ~99.9%, and packaging/companion breadth moves to ~8.6%.
+- Verified QR configured remote URL fallback/validation with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_uses_configured_remote_url_as_local_fallback_when_url_omitted tests\test_cli.py::test_qr_rejects_invalid_configured_remote_url_before_bind_fallback -q`
+  (`2 failed` before implementation because remote URL config was ignored,
+  then `2 passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py
+  -q -k "qr_"` (`21 passed, 616 deselected`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `ce3f78cd`.
+
+- Native `openzues qr` now derives non-remote setup-code URLs from
+  `gateway.bind=custom`, `gateway.customBindHost`, and `gateway.port` after
+  higher-priority public/remote/Tailscale sources, while still rejecting public
+  cleartext custom hosts before issuing a bootstrap token. This closes
+  `OZ-COMP-001AX`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.7%.
+- Verified QR custom bind URL config with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_uses_custom_bind_host_from_config_when_url_omitted tests\test_cli.py::test_qr_rejects_public_custom_bind_host_before_token_issue -q`
+  (`2 failed` before implementation because custom bind config was ignored,
+  then `2 passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py
+  -q -k "qr_"` (`23 passed, 616 deselected`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `306b68dc`.
+
+- Native `openzues qr` now supports `gateway.bind=lan` by selecting a private
+  LAN IPv4 through a fakeable network probe, deriving the setup-code URL from
+  that address and `gateway.port`, and returning the upstream-shaped
+  `gateway.bind=lan set, but no private LAN IP was found.` error before
+  issuing a bootstrap token when no LAN address is available. This closes
+  `OZ-COMP-001AY`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~8.8%.
+- Verified QR LAN bind URL derivation with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_uses_lan_bind_host_from_network_probe tests\test_cli.py::test_qr_lan_bind_reports_missing_private_lan_ip_before_token_issue -q`
+  (`2 failed` before implementation because LAN bind config fell through to
+  the generic loopback preflight, then `2 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`25 passed, 616
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `c4f1acca`.
+
+- Native `openzues qr` now supports `gateway.bind=tailnet` by selecting a
+  fakeable 100.64/10 tailnet IPv4, validating the derived setup URL through
+  the shared mobile pairing policy, and returning the upstream-shaped
+  `gateway.bind=tailnet set, but no tailnet IP was found.` error before token
+  issuance when no tailnet address is available. This closes `OZ-COMP-001AZ`;
+  repo-wide parity remains estimated at ~99.9%, and packaging/companion
+  breadth moves to ~8.9%.
+- Verified QR tailnet bind handling with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_rejects_tailnet_bind_cleartext_url_before_token_issue tests\test_cli.py::test_qr_tailnet_bind_reports_missing_tailnet_ip_before_token_issue -q`
+  (`2 failed` before implementation because tailnet bind config fell through
+  to the generic loopback preflight, then `2 passed`), adjacent QR CLI proof
+  `python -m pytest tests\test_cli.py -q -k "qr_"` (`27 passed, 616
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `6ad6f756`.
+
+- Native `openzues qr` now rejects scheme-like path public URLs such as
+  `http:/localhost:notaport` before fallback normalization, matching
+  OpenClaw's setup-code URL parser and preventing malformed input from being
+  emitted as `wss://http`. This closes `OZ-COMP-001BA`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to ~9.0%.
+- Verified QR scheme-like public URL rejection with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_setup_code_only_rejects_scheme_like_path_public_url_before_token_issue -q`
+  (`1 failed` before implementation because a setup code was printed, then `1
+  passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py -q -k
+  "qr_"` (`28 passed, 616 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+  --check`. Source/test checkpointed in `5dda873e`.
+
+- Native `openzues qr` now derives bind-based setup-code URL schemes from
+  `gateway.tls.enabled`, so custom/LAN/tailnet/settings bind URLs use `wss://`
+  when gateway TLS is enabled and `ws://` otherwise. This closes
+  `OZ-COMP-001BB`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~9.1%.
+- Verified QR bind TLS scheme parity with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_uses_tls_scheme_for_custom_bind_host_when_enabled -q`
+  (`1 failed` before implementation because the URL remained `ws://`, then `1
+  passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py -q -k
+  "qr_"` (`29 passed, 616 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+  --check`. Source/test checkpointed in `51efda66`.
+
+- Native `openzues qr` now treats explicit `gateway.auth.mode=password` as a
+  hard password requirement for local setup codes, matching OpenClaw's
+  `resolvePairingSetupAuthLabel` behavior and preventing env-token or
+  bootstrap-token fallback when no password is configured. This closes
+  `OZ-COMP-001BC`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~9.2%.
+- Verified QR password auth-mode hard requirement with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_password_auth_mode_requires_password_before_token_issue -q`
+  (`1 failed` before implementation because a setup code was accepted with
+  exit `0`, then `1 passed`), adjacent QR CLI proof `python -m pytest
+  tests\test_cli.py -q -k "qr_"` (`30 passed, 616 deselected`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `56dcdee9`.
+
+- Native `openzues qr` now treats explicit `gateway.auth.mode=token` as a hard
+  token requirement for local setup codes, matching OpenClaw's setup-code auth
+  resolver and preventing password/bootstrap fallback when no token is
+  configured. This closes `OZ-COMP-001BD`; repo-wide parity remains estimated
+  at ~99.9%, and packaging/companion breadth moves to ~9.3%.
+- Verified QR token auth-mode hard requirement with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_token_auth_mode_requires_token_before_token_issue -q`
+  (`1 failed` before implementation because a setup code was accepted with
+  exit `0`, then `1 passed`), adjacent QR CLI proof `python -m pytest
+  tests\test_cli.py -q -k "qr_"` (`31 passed, 616 deselected`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `49846f75`.
+
+- Native `openzues qr` now materializes local `gateway.auth.token` SecretRefs
+  before setup-code auth resolution, preserving the upstream token-first
+  materialization order and keeping resolved token values out of CLI output.
+  This closes `OZ-COMP-001BE`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~9.4%.
+- Verified QR local token SecretRef resolution with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_local_json_resolves_gateway_token_secretref -q`
+  (`1 failed` before implementation because explicit token mode reported no
+  configured token, then `1 passed`), adjacent QR CLI proof `python -m pytest
+  tests\test_cli.py -q -k "qr_"` (`32 passed, 616 deselected`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `5ca11f09`.
+
+- Native `openzues qr` now allows explicit `gateway.bind=custom` loopback
+  hosts such as `127.0.0.1`, matching OpenClaw's `resolveGatewayBindUrl`
+  contract while preserving the implicit loopback fallback error for
+  unconfigured bind URLs. This closes `OZ-COMP-001BF`; repo-wide parity
+  remains estimated at ~99.9%, and packaging/companion breadth moves to ~9.5%.
+- Verified QR custom loopback bind parity with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_allows_explicit_custom_loopback_bind_host -q`
+  (`1 failed` before implementation because the custom bind hit the loopback
+  preflight, then `1 passed`), adjacent QR CLI proof `python -m pytest
+  tests\test_cli.py -q -k "qr_"` (`33 passed, 616 deselected`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `8b546000`.
+
+- Native `openzues qr` now resolves the setup-code auth label before resolving
+  the gateway URL, matching OpenClaw's `resolvePairingSetupFromConfig` order so
+  explicit missing auth errors take precedence over loopback or remote URL
+  preflight errors. This closes `OZ-COMP-001BG`; repo-wide parity remains
+  estimated at ~99.9%, and packaging/companion breadth moves to ~9.6%.
+- Verified QR auth-before-URL ordering with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_auth_error_precedes_loopback_url_resolution_before_token_issue -q`
+  (`1 failed` before implementation because the loopback URL error won, then
+  `1 passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py -q
+  -k "qr_"` (`34 passed, 616 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+  --check`. Source/test checkpointed in `894a0bb0`.
+
+- Native `openzues qr` no longer treats unresolved SecretRef-shaped auth
+  strings such as `${MISSING_GW_TOKEN}` as plaintext token/password material
+  during inferred-mode auth selection. This matches OpenClaw's
+  `resolveSecretInputRef` / `normalizeSecretInputString` split and lets a
+  real password env candidate win. This closes `OZ-COMP-001BH`; repo-wide
+  parity remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~9.7%.
+- Verified QR SecretRef-template auth inference with focused red/green
+  `python -m pytest tests\test_cli.py::test_qr_inferred_mode_ignores_unresolved_token_template_when_password_env_set -q`
+  (`1 failed` before implementation because auth resolved as `token`, then `1
+  passed`), adjacent QR CLI proof `python -m pytest tests\test_cli.py -q -k
+  "qr_"` (`35 passed, 616 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, `mypy src\openzues\cli.py`, and focused `git diff
+  --check`. Source/test checkpointed in `27def1fb`.
+
+- Native Zalo direct-DM pairing replies now format the owner approval command
+  through an OpenClaw-shaped CLI formatter, preserving `OPENCLAW_PROFILE` /
+  `OPENCLAW_CONTAINER_HINT` context in the same approval instructions emitted
+  by upstream `buildPairingReply`. This closes `OZ-COMP-001BI`; repo-wide
+  parity remains estimated at ~99.9%, and packaging/companion breadth moves to
+  ~9.8%.
+- Verified Zalo profile-aware pairing approval command formatting with focused
+  red/green
+  `python -m pytest tests\test_ops_mesh.py::test_zalo_pairing_reply_formats_profile_aware_openclaw_command -q`
+  (`1 failed` before implementation because the reply emitted the bare
+  `openclaw pairing approve` command, then `1 passed`), adjacent Zalo pairing
+  proof `python -m pytest tests\test_ops_mesh.py -q -k "zalo and pairing"`
+  (`5 passed, 506 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and focused `git diff --check`.
+  Source/test checkpointed in `a5574ff2`.
+
+- Native OpenClaw plugin SDK `buildPairingReply` now formats approval commands
+  through the existing `formatOpenClawCliCommand` shim, preserving
+  `OPENCLAW_PROFILE` / `OPENCLAW_CONTAINER_HINT` context for imported plugin
+  runtimes just like upstream `pairing-messages.ts`. This closes
+  `OZ-COMP-001BJ`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~9.9%.
+- Verified plugin SDK profile-aware pairing reply formatting with focused
+  red/green
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_pairing_reply_uses_profile_hint -q`
+  (`1 failed` before implementation because the helper emitted the bare
+  approval command, then `1 passed`), adjacent imported pairing helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "pairing_reply or conversation_binding_runtime_helpers"`
+  (`3 passed, 1300 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  focused `git diff --check`. Source/test checkpointed in `d137a71f`.
 
 ## References
 
