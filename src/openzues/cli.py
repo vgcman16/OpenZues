@@ -1634,7 +1634,45 @@ def _emit_channel_logs(payload: dict[str, object], *, json_output: bool) -> None
         typer.echo(" ".join(parts))
 
 
-def _emit_logs_tail(payload: dict[str, object], *, json_output: bool) -> None:
+def _format_log_tail_timestamp(value: str, *, local_time: bool) -> str:
+    if not local_time:
+        return value
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone().isoformat(timespec="milliseconds")
+
+
+def _format_log_tail_line(raw: str, *, local_time: bool) -> str:
+    parsed = _parse_channel_log_line(raw)
+    if parsed is None:
+        return raw
+    time_text = _optional_cli_string(parsed.get("time"))
+    level = _optional_cli_string(parsed.get("level"))
+    label = _optional_cli_string(parsed.get("subsystem")) or _optional_cli_string(
+        parsed.get("module")
+    )
+    message = _optional_cli_string(parsed.get("message")) or raw
+    parts = []
+    if time_text:
+        parts.append(_format_log_tail_timestamp(time_text, local_time=local_time))
+    if level:
+        parts.append(level)
+    if label:
+        parts.append(label)
+    parts.append(message)
+    return " ".join(parts)
+
+
+def _emit_logs_tail(
+    payload: dict[str, object],
+    *,
+    json_output: bool,
+    local_time: bool = False,
+) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
         return
@@ -1648,7 +1686,7 @@ def _emit_logs_tail(payload: dict[str, object], *, json_output: bool) -> None:
         typer.echo("No log lines.")
         return
     for line in lines:
-        typer.echo(str(line))
+        typer.echo(_format_log_tail_line(str(line), local_time=local_time))
 
 
 def _msteams_delegated_auth_config_patch(account_id: str | None) -> dict[str, object]:
@@ -100776,7 +100814,19 @@ def logs_command(
         "--json",
         help="Emit the log tail as JSON.",
     ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="Emit plain text log lines.",
+    ),
+    local_time: bool = typer.Option(
+        False,
+        "--local-time",
+        help="Display parsed timestamps in the local timezone.",
+    ),
 ) -> None:
+    _ = plain
+
     async def _action(services: CliServices) -> dict[str, object]:
         return await _build_logs_tail_payload(
             services,
@@ -100790,7 +100840,7 @@ def logs_command(
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
-    _emit_logs_tail(payload, json_output=json_output)
+    _emit_logs_tail(payload, json_output=json_output, local_time=local_time)
 
 
 @app.command("qr")

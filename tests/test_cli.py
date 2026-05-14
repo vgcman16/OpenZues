@@ -8107,6 +8107,39 @@ def test_logs_json_reads_gateway_log_tail(tmp_path, monkeypatch) -> None:
     assert payload["reset"] is False
 
 
+def test_logs_plain_local_time_formats_structured_log_lines(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / "openzues-2026-05-14.log"
+    log_path.write_text(
+        json.dumps(
+            {
+                "time": "2025-01-01T12:00:00.000Z",
+                "0": "line one",
+                "_meta": {
+                    "logLevelName": "INFO",
+                    "name": json.dumps({"subsystem": "gateway"}),
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+
+    result = runner.invoke(app, ["logs", "--local-time", "--plain"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "line one" in result.stdout
+    timestamp = re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\S*", result.stdout)
+    assert timestamp is not None
+    assert not timestamp.group(0).endswith("Z")
+
+
 def test_sandbox_list_json_returns_openclaw_shaped_inventory(monkeypatch) -> None:
     class FakeDatabase:
         async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
