@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import codecs
+import errno
 import hashlib
 import json
 import os
@@ -8138,6 +8139,28 @@ def test_logs_plain_local_time_formats_structured_log_lines(
     timestamp = re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\S*", result.stdout)
     assert timestamp is not None
     assert not timestamp.group(0).endswith("Z")
+
+
+def test_logs_plain_warns_when_stdout_pipe_closes(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / "openzues-2026-05-14.log"
+    log_path.write_text("line one\n", encoding="utf-8")
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    original_echo = cli_module.typer.echo
+
+    def fake_echo(message: object = "", *args: object, **kwargs: object) -> None:
+        if not kwargs.get("err"):
+            raise OSError(errno.EPIPE, "Broken pipe")
+        original_echo(message, *args, **kwargs)
+
+    monkeypatch.setattr(cli_module.typer, "echo", fake_echo)
+
+    result = runner.invoke(app, ["logs", "--plain"])
+
+    assert result.exit_code == 0, result.output
+    assert "output stdout closed (EPIPE). Stopping tail." in result.stderr
 
 
 def test_logs_plain_truncation_notice_includes_max_bytes_hint(

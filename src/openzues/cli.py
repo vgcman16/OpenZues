@@ -4,6 +4,7 @@ import asyncio
 import base64
 import codecs
 import copy
+import errno
 import importlib
 import inspect
 import ipaddress
@@ -1668,6 +1669,30 @@ def _format_log_tail_line(raw: str, *, local_time: bool) -> str:
     return " ".join(parts)
 
 
+def _logs_broken_pipe_code(exc: OSError) -> str | None:
+    if exc.errno == errno.EPIPE:
+        return "EPIPE"
+    if exc.errno == errno.EIO:
+        return "EIO"
+    return None
+
+
+def _logs_safe_echo(message: object = "", *, err: bool = False) -> bool:
+    try:
+        typer.echo(message, err=err)
+    except OSError as exc:
+        code = _logs_broken_pipe_code(exc)
+        if code is None:
+            raise
+        stream_name = "stderr" if err else "stdout"
+        try:
+            typer.echo(f"output {stream_name} closed ({code}). Stopping tail.", err=True)
+        except OSError:
+            pass
+        return False
+    return True
+
+
 def _emit_logs_tail(
     payload: dict[str, object],
     *,
@@ -1680,18 +1705,22 @@ def _emit_logs_tail(
         _emit_payload(payload, json_output=True)
         return
     if show_header:
-        typer.echo(f"Log file: {payload.get('file') or ''}")
+        if not _logs_safe_echo(f"Log file: {payload.get('file') or ''}"):
+            return
     if payload.get("truncated"):
-        typer.echo("Log tail truncated (increase --max-bytes).", err=True)
+        if not _logs_safe_echo("Log tail truncated (increase --max-bytes).", err=True):
+            return
     if payload.get("reset"):
-        typer.echo("Log cursor reset (file rotated).", err=True)
+        if not _logs_safe_echo("Log cursor reset (file rotated).", err=True):
+            return
     lines = payload.get("lines")
     if not isinstance(lines, list) or not lines:
         if empty_notice:
-            typer.echo("No log lines.")
+            _logs_safe_echo("No log lines.")
         return
     for line in lines:
-        typer.echo(_format_log_tail_line(str(line), local_time=local_time))
+        if not _logs_safe_echo(_format_log_tail_line(str(line), local_time=local_time)):
+            return
 
 
 def _msteams_delegated_auth_config_patch(account_id: str | None) -> dict[str, object]:
