@@ -100457,10 +100457,9 @@ def _resolve_qr_auth_label(
     if auth_mode == "password":
         if has_password:
             return "password"
-        if remote:
-            raise ValueError(
-                "Gateway auth is set to password, but no password is configured."
-            )
+        raise ValueError(
+            "Gateway auth is set to password, but no password is configured."
+        )
     if auth_mode == "token":
         if has_token:
             return "token"
