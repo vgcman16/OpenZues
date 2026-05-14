@@ -5404,9 +5404,10 @@ def test_msteams_messages_endpoint_rejects_failed_jwt_before_json_body(tmp_path)
 
 
 NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET = (
-    '["slack", "telegram", "discord", "whatsapp", "zalo", "googlechat", '
-    '"nextcloud-talk", "synology-chat", "mattermost", "msteams", "signal", '
-    '"irc", "twitch", "tlon", "line", "matrix"].includes(routeKind)'
+    '["slack", "telegram", "discord", "whatsapp", "zalo", "feishu", '
+    '"googlechat", "nextcloud-talk", "synology-chat", "mattermost", '
+    '"msteams", "signal", "irc", "twitch", "tlon", "line", '
+    '"matrix"].includes(routeKind)'
 )
 
 
@@ -5444,6 +5445,23 @@ def test_notification_route_operator_form_offers_zalo_native_routes() -> None:
 
     assert '<option value="zalo">Zalo native route</option>' in template
     assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
+
+
+def test_notification_route_operator_form_offers_feishu_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="feishu">Feishu/Lark native route</option>' in template
+    assert (
+        '["slack", "telegram", "discord", "whatsapp", "zalo", "feishu", '
+        '"googlechat", "nextcloud-talk", "synology-chat", "mattermost", '
+        '"msteams", "signal", "irc", "twitch", "tlon", "line", '
+        '"matrix"].includes(routeKind)'
+    ) in script
 
 
 def test_notification_route_operator_form_offers_googlechat_native_routes() -> None:
