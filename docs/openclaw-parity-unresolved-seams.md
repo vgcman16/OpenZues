@@ -15,7 +15,7 @@ Current percentage rollup:
   `artifacts.download`, `agentRuntime` session metadata projection, sandboxed
   remote media staging, requester-scoped `agents_list`, `tools.invoke`, and
   Tlon monitor lifecycle runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999992% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.99999993% after the
   runtime bridge doctor posture, native ACP client interactive replay, ACP
   persisted task-record child-cap counting, ACP `streamTo="parent"`
   requester-context preflight, ACP `resumeSessionId` requester-context
@@ -31,7 +31,8 @@ Current percentage rollup:
   post-update completion-cache refresh, all-shell completion write-state,
   secrets reload CLI surface, QR remote config lookup/auth/Tailscale
   MagicDNS/env+file+exec+gateway SecretRef diagnostics/unresolved-auth
-  preflight, devices list/approve CLI, package-update downgrade confirmation,
+  preflight, devices list/approve CLI, top-level logs CLI tail,
+  package-update downgrade confirmation,
   stored-channel package update dispatch, package-update Node engine preflight,
   package-update activated plugin/channel-probe/version-mismatch restart-health failure,
   gateway health `serverVersion` projection,
@@ -13437,3 +13438,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9%, and packaging/companion breadth moves to ~11.3%. Continue
   companion-app device flows, packaging/distribution, ACP lifecycle, provider
   action breadth, or setup/onboarding gaps.
+- Current queue-head adjustment: native CLI now exposes top-level
+  `openzues logs` over the gateway log tail service with JSON output and
+  `--limit` / `--max-bytes` / `--cursor` options. Source/test checkpointed in
+  `8ce8d4aa`; repo-wide parity remains estimated at ~99.9%, and runtime/CLI/
+  doctor native-bridge parity moves to ~99.99999993%. Continue remaining
+  packaging/distribution breadth, ACP lifecycle depth, installed plugin
+  activation, provider media edges, or companion app flows.
