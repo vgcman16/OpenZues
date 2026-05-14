@@ -15,6 +15,7 @@ from openzues.services.device_bootstrap_profile import (
     normalize_device_auth_scopes,
     normalize_device_bootstrap_handoff_profile,
     normalize_device_bootstrap_profile,
+    resolve_bootstrap_profile_scopes_for_role,
 )
 
 DEVICE_BOOTSTRAP_TOKEN_TTL_SECONDS = 10 * 60
@@ -167,6 +168,42 @@ def get_bound_device_bootstrap_profile(
     return _record_bootstrap_profile(record)
 
 
+def redeem_device_bootstrap_token_profile(
+    *,
+    base_dir: Path,
+    token: str,
+    role: str,
+    scopes: Iterable[str],
+) -> dict[str, bool]:
+    found = _find_bootstrap_record_entry(base_dir=base_dir, token=token)
+    if found is None:
+        return {"recorded": False, "fullyRedeemed": False}
+    state, token_key, record = found
+    issued_profile = _record_bootstrap_profile(record)
+    redeemed_profile = _record_redeemed_bootstrap_profile(record)
+    redeemed_roles, redeemed_scopes = normalize_device_bootstrap_profile(
+        [*redeemed_profile["roles"], role],
+        [
+            *redeemed_profile["scopes"],
+            *resolve_bootstrap_profile_scopes_for_role(role, scopes),
+        ],
+    )
+    next_redeemed_profile = {"roles": redeemed_roles, "scopes": redeemed_scopes}
+    state[token_key] = {
+        **record,
+        "profile": issued_profile,
+        "redeemedProfile": next_redeemed_profile,
+    }
+    _write_bootstrap_state(_bootstrap_token_path(base_dir), state)
+    return {
+        "recorded": True,
+        "fullyRedeemed": _bootstrap_profile_satisfies_profile(
+            actual_profile=next_redeemed_profile,
+            required_profile=issued_profile,
+        ),
+    }
+
+
 def _issued_bootstrap_profile(
     *,
     profile: Mapping[str, Iterable[str]] | None,
@@ -191,6 +228,41 @@ def _record_bootstrap_profile(record: Mapping[str, Any]) -> dict[str, list[str]]
         profile.get("scopes"),
     )
     return {"roles": roles, "scopes": scopes}
+
+
+def _record_redeemed_bootstrap_profile(
+    record: Mapping[str, Any],
+) -> dict[str, list[str]]:
+    raw_profile = record.get("redeemedProfile")
+    profile = raw_profile if isinstance(raw_profile, dict) else {}
+    roles, scopes = normalize_device_bootstrap_profile(
+        profile.get("roles"),
+        profile.get("scopes"),
+    )
+    return {"roles": roles, "scopes": scopes}
+
+
+def _bootstrap_profile_satisfies_profile(
+    *,
+    actual_profile: Mapping[str, list[str]],
+    required_profile: Mapping[str, list[str]],
+) -> bool:
+    actual_roles = actual_profile.get("roles") or []
+    required_roles = required_profile.get("roles") or []
+    for role in required_roles:
+        if role not in actual_roles:
+            return False
+        required_scopes = resolve_bootstrap_profile_scopes_for_role(
+            role,
+            required_profile.get("scopes") or [],
+        )
+        if required_scopes and not _bootstrap_profile_allows_request(
+            profile=actual_profile,
+            role=role,
+            scopes=required_scopes,
+        ):
+            return False
+    return True
 
 
 def _bootstrap_profile_allows_request(

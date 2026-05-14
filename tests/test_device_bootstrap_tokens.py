@@ -7,6 +7,7 @@ from openzues.services.device_bootstrap_tokens import (
     get_bound_device_bootstrap_profile,
     get_device_bootstrap_token_profile,
     issue_device_bootstrap_token,
+    redeem_device_bootstrap_token_profile,
     revoke_device_bootstrap_token,
     verify_device_bootstrap_token,
 )
@@ -195,3 +196,46 @@ def test_get_bound_device_bootstrap_profile_requires_verified_identity(
         ],
     }
     assert wrong_identity is None
+
+
+def test_redeem_device_bootstrap_token_profile_persists_progress(tmp_path) -> None:
+    issued = issue_device_bootstrap_token(base_dir=tmp_path)
+    verify_device_bootstrap_token(
+        base_dir=tmp_path,
+        token=issued.token,
+        device_id="device-123",
+        public_key="public-key-123",
+        role="node",
+        scopes=[],
+    )
+
+    node_redeemed = redeem_device_bootstrap_token_profile(
+        base_dir=tmp_path,
+        token=issued.token,
+        role="node",
+        scopes=[],
+    )
+    operator_redeemed = redeem_device_bootstrap_token_profile(
+        base_dir=tmp_path,
+        token=issued.token,
+        role="operator",
+        scopes=[
+            "operator.approvals",
+            "operator.read",
+            "operator.write",
+            "operator.talk.secrets",
+        ],
+    )
+    state = json.loads((tmp_path / "devices" / "bootstrap.json").read_text())
+
+    assert node_redeemed == {"recorded": True, "fullyRedeemed": False}
+    assert operator_redeemed == {"recorded": True, "fullyRedeemed": True}
+    assert state[issued.token]["redeemedProfile"] == {
+        "roles": ["node", "operator"],
+        "scopes": [
+            "operator.approvals",
+            "operator.read",
+            "operator.talk.secrets",
+            "operator.write",
+        ],
+    }
