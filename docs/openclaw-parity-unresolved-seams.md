@@ -13315,3 +13315,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   packaging/companion breadth moves to ~9.6%. Continue companion-app device
   flows, packaging/distribution, ACP lifecycle, provider action breadth, or
   setup/onboarding gaps.
+- Current queue-head adjustment: native `openzues qr` now ignores unresolved
+  SecretRef-shaped auth strings during inferred-mode auth selection, allowing
+  a real password env candidate to win over `${MISSING_GW_TOKEN}`. Source/test
+  checkpointed in `27def1fb`; repo-wide parity remains estimated at ~99.9%,
+  and packaging/companion breadth moves to ~9.7%. Continue companion-app
+  device flows, packaging/distribution, ACP lifecycle, provider action breadth,
+  or setup/onboarding gaps.
