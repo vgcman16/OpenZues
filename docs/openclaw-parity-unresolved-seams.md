@@ -13344,3 +13344,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   packaging/companion breadth moves to ~10.0%. Continue companion-app device
   flows, packaging/distribution, ACP lifecycle, provider action breadth, or
   setup/onboarding gaps.
+- Current queue-head adjustment: native device pairing now supersedes pending
+  requests when approval roles/scopes change, merging prior and incoming
+  approval requirements into a fresh request id. Source/test checkpointed in
+  `ac3d1821`; repo-wide parity remains estimated at ~99.9%, and
+  packaging/companion breadth moves to ~10.1%. Continue companion-app device
+  flows, packaging/distribution, ACP lifecycle, provider action breadth, or
+  setup/onboarding gaps.
