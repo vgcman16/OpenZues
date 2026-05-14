@@ -82,7 +82,14 @@ _PLATFORM_DEFAULTS: dict[str, tuple[str, ...]] = {
     ),
     "desktop": _SYSTEM_COMMANDS,
     "linux": _SYSTEM_COMMANDS,
-    "windows": _SYSTEM_COMMANDS,
+    "windows": (
+        *_CANVAS_COMMANDS,
+        *_CAMERA_COMMANDS,
+        *_LOCATION_COMMANDS,
+        *_DEVICE_COMMANDS,
+        *_SYSTEM_COMMANDS,
+        *_SCREEN_COMMANDS,
+    ),
     "unknown": _UNKNOWN_PLATFORM_COMMANDS,
 }
 
