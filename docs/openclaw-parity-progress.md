@@ -26149,6 +26149,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   was not applicable because the touched web owner directory contains no
   Python source modules. Source/test checkpointed in `5d035d5a`.
 
+- Git checkout updates now reject roots that identify as a different
+  `package.json` package before dispatching the runtime update service,
+  matching OpenClaw's `not-openclaw-root` guard. Native OpenZues source
+  checkouts remain accepted through the `pyproject.toml` project identity or
+  the repository folder name fallback. This closes `OZ-PKG-001DL`; repo-wide
+  parity remains estimated at ~99.9%, and runtime/CLI/doctor native-bridge
+  parity moves to ~99.999999992%.
+- Verified non-OpenZues git root update rejection with focused red/green
+  `python -m pytest tests\test_cli.py::test_update_json_rejects_non_openzues_git_root_before_runtime -q`
+  (`run_update` was called before implementation, then `1 passed`), adjacent
+  update proof `python -m pytest tests\test_cli.py -q -k
+  "update_json_rejects_non_openzues_git_root_before_runtime or
+  update_json_dispatches_runtime_update_service or
+  update_json_passes_dev_target_ref_env_to_git_runtime or
+  update_dry_run_json_normalizes_package_name_prefixed_tag or
+  update_dry_run_json_uses_stored_update_channel"` (`5 passed, 653
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, `mypy
+  src\openzues\cli.py`, and focused `git diff --check`. Source/test
+  checkpointed in `7e60f84a`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

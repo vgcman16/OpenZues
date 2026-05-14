@@ -13612,6 +13612,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   inbound/outbound breadth moves to ~99.99999980%. Continue
   packaging/distribution, installed plugin activation depth, provider media
   edges, or companion breadth.
+- Current queue-head adjustment: git checkout updates now reject roots whose
+  `package.json` identifies a different package before runtime dispatch,
+  returning OpenClaw-shaped `reason: "not-openclaw-root"`. Source/test
+  checkpointed in `7e60f84a`; repo-wide parity remains estimated at ~99.9%,
+  and runtime/CLI/doctor native-bridge parity moves to ~99.999999992%.
+  Continue installed plugin activation depth, provider media edges,
+  packaging/distribution, or companion breadth.
 - Current queue-head adjustment: direct provider-native outbound sends now
   lift `MEDIA:` directives out of visible message text and persist/deliver them
   as `mediaUrl` / `mediaUrls`. Source/test checkpointed in `2da7e35d`;
