@@ -20259,21 +20259,18 @@ def _plugin_runtime_resolved_config_from_rows(
     plugins_value = resolved.get("plugins")
     plugins = dict(plugins_value) if isinstance(plugins_value, Mapping) else {}
     allow_value = plugins.get("allow")
-    if isinstance(allow_value, list):
-        allow = list(allow_value)
-        for plugin_id in auto_enabled_plugin_ids:
-            if plugin_id not in allow:
-                allow.append(plugin_id)
-        plugins["allow"] = allow
-        resolved["plugins"] = plugins
+    allow = list(allow_value) if isinstance(allow_value, list) else []
+    for plugin_id in auto_enabled_plugin_ids:
+        if plugin_id not in allow:
+            allow.append(plugin_id)
+    plugins["allow"] = allow
 
     for plugin_id in auto_enabled_plugin_ids:
+        _plugin_runtime_enable_plugin_entry(plugins, plugin_id)
         channel_id = _normalize_openclaw_channel_plugin_id(plugin_id)
         if channel_id is not None:
             _plugin_runtime_enable_channel_config(resolved, channel_id)
-        else:
-            _plugin_runtime_enable_plugin_entry(plugins, plugin_id)
-            resolved["plugins"] = plugins
+    resolved["plugins"] = plugins
     return resolved
 
 
