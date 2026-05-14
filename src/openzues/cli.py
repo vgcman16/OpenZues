@@ -99776,6 +99776,41 @@ def _qr_gateway_port(
     return app_settings.port
 
 
+def _is_qr_private_lan_host(host: str) -> bool:
+    try:
+        address = ipaddress.ip_address(str(host or "").strip().strip("[]"))
+    except ValueError:
+        return False
+    return (
+        address.version == 4
+        and address.is_private
+        and not address.is_loopback
+        and not address.is_link_local
+    )
+
+
+def _resolve_qr_lan_bind_host() -> str | None:
+    try:
+        host_name = socket.gethostname()
+        candidates = socket.getaddrinfo(
+            host_name,
+            None,
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM,
+        )
+    except OSError:
+        return None
+    seen: set[str] = set()
+    for candidate in candidates:
+        address = str(candidate[4][0])
+        if address in seen:
+            continue
+        seen.add(address)
+        if _is_qr_private_lan_host(address):
+            return address
+    return None
+
+
 def _resolve_qr_gateway_bind_url(
     *,
     app_settings: Settings,
@@ -99783,18 +99818,26 @@ def _resolve_qr_gateway_bind_url(
 ) -> tuple[str, str] | None:
     gateway_config = _qr_gateway_config(config_snapshot)
     bind_mode = str(gateway_config.get("bind") or "loopback").strip().lower()
-    if bind_mode != "custom":
-        return None
-    host = _qr_config_text(gateway_config.get("customBindHost"))
-    if host is None:
-        raise ValueError("gateway.bind=custom requires gateway.customBindHost.")
-    if _is_pairing_loopback_host(host):
-        raise ValueError(_qr_loopback_bind_error())
     port = _qr_gateway_port(app_settings=app_settings, config_snapshot=config_snapshot)
-    return (
-        _normalize_pairing_setup_url(f"ws://{_format_pairing_host(host)}:{port}"),
-        "gateway.bind=custom",
-    )
+    if bind_mode == "custom":
+        host = _qr_config_text(gateway_config.get("customBindHost"))
+        if host is None:
+            raise ValueError("gateway.bind=custom requires gateway.customBindHost.")
+        if _is_pairing_loopback_host(host):
+            raise ValueError(_qr_loopback_bind_error())
+        return (
+            _normalize_pairing_setup_url(f"ws://{_format_pairing_host(host)}:{port}"),
+            "gateway.bind=custom",
+        )
+    if bind_mode == "lan":
+        host = _resolve_qr_lan_bind_host()
+        if host is None:
+            raise ValueError("gateway.bind=lan set, but no private LAN IP was found.")
+        return (
+            _normalize_pairing_setup_url(f"ws://{_format_pairing_host(host)}:{port}"),
+            "gateway.bind=lan",
+        )
+    return None
 
 
 _TAILSCALE_STATUS_COMMAND_CANDIDATES = (

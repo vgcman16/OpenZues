@@ -340,6 +340,100 @@ def test_qr_rejects_public_custom_bind_host_before_token_issue(
     assert not (data_dir / "devices" / "bootstrap.json").exists()
 
 
+def test_qr_uses_lan_bind_host_from_network_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setattr(
+        "openzues.cli._resolve_qr_lan_bind_host",
+        lambda: "192.168.1.20",
+        raising=False,
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "bind": "lan",
+                    "port": 18789,
+                    "auth": {"mode": "token", "token": "local-token"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["gatewayUrl"] == "ws://192.168.1.20:18789"
+    assert payload["urlSource"] == "gateway.bind=lan"
+    setup_payload = _decode_base64url_json(payload["setupCode"])
+    assert setup_payload["url"] == "ws://192.168.1.20:18789"
+
+
+def test_qr_lan_bind_reports_missing_private_lan_ip_before_token_issue(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setattr(
+        "openzues.cli._resolve_qr_lan_bind_host",
+        lambda: None,
+        raising=False,
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.5.14-test",
+        data_dir=data_dir,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.5.14-test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "bind": "lan",
+                    "port": 18789,
+                    "auth": {"mode": "token", "token": "local-token"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["qr", "--setup-code-only"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "gateway.bind=lan set, but no private LAN IP was found." in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
 def test_qr_uses_device_pair_public_url_from_config_when_url_omitted(
     tmp_path,
     monkeypatch,
